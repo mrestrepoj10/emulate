@@ -1,0 +1,3 @@
+interface:
+  display_name: "APS Data Management"
+  short_description: "APS Data Management and OSS guidance for hubs, projects, folders, items, versions, uploads, downloads, buckets, signed URLs, permissions, and commands."

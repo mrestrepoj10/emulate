@@ -1,0 +1,3 @@
+interface:
+  display_name: "APS Model Derivative"
+  short_description: "APS Model Derivative guidance for translation jobs, SVF/SVF2 viewables, manifests, metadata, properties, thumbnails, and derivatives."
