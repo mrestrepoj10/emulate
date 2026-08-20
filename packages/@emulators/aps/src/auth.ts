@@ -83,10 +83,20 @@ export async function accessTokenForRequest(c: Context<AppEnv>, store: Store): P
   return token ? findActiveAccessToken(store, token) : null;
 }
 
+/**
+ * The token record for a request already authenticated by `apsAuth`. Reads the
+ * token the middleware stashed on the context, so handlers never re-verify.
+ */
+export function storedAccessToken(c: Context<AppEnv>, store: Store): StoredAccessToken | null {
+  const token = c.get("authToken");
+  return token ? (getAccessTokens(store).get(token) ?? null) : null;
+}
+
 export function apsAuth(store: Store, options: { scopes: string[]; requireUser?: boolean }): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    const record = await accessTokenForRequest(c, store);
-    if (!record) return invalidToken(c);
+    const token = bearerToken(c);
+    const record = token ? await findActiveAccessToken(store, token) : null;
+    if (!token || !record) return invalidToken(c);
 
     const grantedScopes = record.scope.split(/\s+/).filter(Boolean);
     if (options.scopes.some((scope) => !grantedScopes.includes(scope))) {
@@ -96,6 +106,8 @@ export function apsAuth(store: Store, options: { scopes: string[]; requireUser?:
       return insufficientPrivilege(c);
     }
 
+    c.set("authToken", token);
+    c.set("authScopes", grantedScopes);
     await next();
   };
 }

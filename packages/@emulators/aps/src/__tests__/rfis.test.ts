@@ -104,6 +104,23 @@ describe("APS ACC RFI routes", () => {
     expect(await response.json()).toEqual({ current: "RFI-002", next: "RFI-003" });
   });
 
+  it("orders custom identifiers numerically, not lexicographically", async () => {
+    const rfiSeed = {
+      project_id: "b.emulate-project",
+      rfi_type_id: "55555555-5555-4555-8555-555555555555",
+      title: "Numeric ordering",
+    };
+    const setup = createTestApp({
+      rfis: [
+        { ...rfiSeed, id: "19191919-1919-4191-8191-191919191919", custom_identifier: "RFI-9" },
+        { ...rfiSeed, id: "20202020-2020-4202-8202-202020202020", custom_identifier: "RFI-10" },
+      ],
+    });
+    const token = await issueThreeLeggedToken(setup.app, setup.store);
+    const response = await setup.app.request(`${rfisBase}/rfis/custom-identifier`, { headers: bearer(token) });
+    expect(await response.json()).toEqual({ current: "RFI-10", next: "RFI-11" });
+  });
+
   it("rejects malformed searches and the Data Management project ID form", async () => {
     const token = await issueThreeLeggedToken(app, store);
     const malformed = await app.request(`${rfisBase}/search:rfis`, {

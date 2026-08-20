@@ -1,5 +1,5 @@
-import type { AppEnv, ContentfulStatusCode, Context, Store } from "@emulators/core";
-import { accessTokenForRequest } from "./auth.js";
+import type { AppEnv, Collection, Context, Entity, Store } from "@emulators/core";
+import { storedAccessToken } from "./auth.js";
 import type { ApsAccProjectUser, ApsProject, ApsUser } from "./entities.js";
 import type { ApsStore } from "./store.js";
 
@@ -28,6 +28,15 @@ export function projectForAccId(
   const bareId = bareProjectId(requestedProjectId);
   const project = aps.projects.all().find((candidate) => bareProjectId(candidate.project_id) === bareId);
   return project ? { kind: "found", project } : { kind: "missing" };
+}
+
+export function findProjectResource<T extends Entity & { project_id: string }, K extends keyof T>(
+  collection: Collection<T>,
+  projectId: string,
+  idField: K,
+  id: T[K],
+): T | undefined {
+  return collection.findBy("project_id", projectId).find((item) => item[idField] === id);
 }
 
 function integerValue(value: unknown): number | null {
@@ -112,40 +121,52 @@ export async function readJsonObject(c: Context<AppEnv>): Promise<JsonObjectResu
   }
 }
 
-export async function userForApsRequest(
-  c: Context<AppEnv>,
-  store: Store,
-  aps: ApsStore,
-  allowUserHeader: boolean,
-): Promise<ApsUser | null> {
-  const token = await accessTokenForRequest(c, store);
-  if (!token) return null;
-  if (token.apsUserId) return aps.users.findOneBy("user_id", token.apsUserId) ?? null;
-  if (!allowUserHeader) return null;
+export type AccUserResolution = { kind: "user"; user: ApsUser } | { kind: "app" } | { kind: "unknown-user" };
 
-  const requestedUserId = c.req.header("x-user-id");
-  return requestedUserId ? (aps.users.findOneBy("user_id", requestedUserId) ?? null) : null;
+/**
+ * Resolves the acting user behind a request `apsAuth` already authenticated:
+ * the token's user for 3-legged tokens, otherwise the x-user-id header (ACC's
+ * 2-legged impersonation), otherwise the bare app.
+ */
+export function resolveAccUser(c: Context<AppEnv>, store: Store, aps: ApsStore): AccUserResolution {
+  const requestedUserId = storedAccessToken(c, store)?.apsUserId ?? c.req.header("x-user-id");
+  if (!requestedUserId) return { kind: "app" };
+  const user = aps.users.findOneBy("user_id", requestedUserId);
+  return user ? { kind: "user", user } : { kind: "unknown-user" };
 }
 
 export function accProjectUser(aps: ApsStore, projectId: string, userId: string): ApsAccProjectUser | null {
-  return (
-    aps.accProjectUsers.findBy("project_id", projectId).find((membership) => membership.user_id === userId) ?? null
-  );
+  return findProjectResource(aps.accProjectUsers, projectId, "user_id", userId) ?? null;
 }
 
-export function issuesError(c: Context<AppEnv>, status: ContentfulStatusCode, title: string, detail: string): Response {
-  return c.json({ title, detail }, status);
+export type AccRequestErrorKind = "invalid-project-id" | "project-not-found" | "user-required" | "not-a-member";
+
+export type AccErrorResponder = (c: Context<AppEnv>, kind: AccRequestErrorKind) => Response;
+
+export interface AccMemberContext {
+  project: ApsProject;
+  user: ApsUser;
+  member: ApsAccProjectUser;
 }
 
-export function rfiError(c: Context<AppEnv>, status: ContentfulStatusCode, code: string, message: string): Response {
-  return c.json({ error: { code, message } }, status);
-}
-
-export function sheetsError(
+/**
+ * Shared request pipeline for ACC services that require project membership:
+ * resolve the project by the service's ID rule, then the acting user, then
+ * their membership. Failures render through the service's own error dialect.
+ */
+export function accMemberContext(
   c: Context<AppEnv>,
-  status: ContentfulStatusCode,
-  errorCode: string,
-  message: string,
-): Response {
-  return c.json({ errorCode, message }, status);
+  store: Store,
+  aps: ApsStore,
+  options: { idRule: AccProjectIdRule; error: AccErrorResponder },
+): AccMemberContext | Response {
+  const projectResult = projectForAccId(aps, c.req.param("projectId"), options.idRule);
+  if (projectResult.kind === "invalid") return options.error(c, "invalid-project-id");
+  if (projectResult.kind === "missing") return options.error(c, "project-not-found");
+
+  const resolution = resolveAccUser(c, store, aps);
+  if (resolution.kind !== "user") return options.error(c, "user-required");
+  const member = accProjectUser(aps, projectResult.project.project_id, resolution.user.user_id);
+  if (!member) return options.error(c, "not-a-member");
+  return { project: projectResult.project, user: resolution.user, member };
 }

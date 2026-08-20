@@ -41,78 +41,145 @@ export interface ApsAccProjectUser extends Entity {
   rfi_roles: string[];
 }
 
+export interface ApsActorRef {
+  id: string;
+  type: string;
+}
+
+/**
+ * ACC entities store the full API response document as a typed `payload`.
+ * The payload is the single source of truth: the fields routes filter or sort
+ * on are declared explicitly, the long tail of response-only fields rides
+ * along through the index signature. Entities add only the store's lookup
+ * keys next to the payload — never a second copy of payload data.
+ */
+export interface ApsIssueSubtypeDoc extends Record<string, unknown> {
+  id: string;
+}
+
+export interface ApsIssueTypeDoc extends Record<string, unknown> {
+  id: string;
+  isActive: boolean;
+  subtypes: ApsIssueSubtypeDoc[];
+}
+
 export interface ApsIssueType extends Entity {
   project_id: string;
   issue_type_id: string;
-  is_active: boolean;
-  payload: Record<string, unknown>;
+  payload: ApsIssueTypeDoc;
+}
+
+export interface ApsIssueDoc extends Record<string, unknown> {
+  id: string;
+  displayId: number;
+  title: string;
+  status: string;
+  issueTypeId: string;
+  issueSubtypeId: string;
+  assignedTo: string | null;
+  deleted: boolean;
 }
 
 export interface ApsIssue extends Entity {
   project_id: string;
   issue_id: string;
-  issue_type_id: string;
-  issue_subtype_id: string;
-  display_id: number;
-  title: string;
+  payload: ApsIssueDoc;
+}
+
+export interface ApsRfiTypeDoc extends Record<string, unknown> {
+  id: string;
   status: string;
-  assigned_to: string | null;
-  deleted: boolean;
-  payload: Record<string, unknown>;
+  isDefault: boolean;
 }
 
 export interface ApsRfiType extends Entity {
   project_id: string;
   rfi_type_id: string;
+  payload: ApsRfiTypeDoc;
+}
+
+export interface ApsRfiAttributeDoc extends Record<string, unknown> {
+  id: string;
   status: string;
-  payload: Record<string, unknown>;
 }
 
 export interface ApsRfiAttribute extends Entity {
   project_id: string;
   attribute_id: string;
+  payload: ApsRfiAttributeDoc;
+}
+
+export interface ApsRfiDoc extends Record<string, unknown> {
+  id: string;
+  customIdentifier: string;
+  title: string;
+  question: string;
   status: string;
-  payload: Record<string, unknown>;
+  assignedTo: ApsActorRef[];
+  rfiTypeId: string;
+  reference: string;
+  priority: string;
+  responses: unknown[];
+  draftResponses: unknown[];
 }
 
 export interface ApsRfi extends Entity {
   project_id: string;
   rfi_id: string;
-  rfi_type_id: string;
-  custom_identifier: string;
-  title: string;
-  status: string;
-  assigned_to: string[];
-  reference: string;
-  priority: string;
-  payload: Record<string, unknown>;
+  payload: ApsRfiDoc;
+}
+
+export interface ApsSheetCollectionDoc extends Record<string, unknown> {
+  id: string;
+  name: string;
 }
 
 export interface ApsSheetCollection extends Entity {
   project_id: string;
   collection_id: string;
-  payload: Record<string, unknown>;
+  payload: ApsSheetCollectionDoc;
+}
+
+export interface ApsSheetCollectionRef {
+  id: string;
+  name: string;
+}
+
+export interface ApsSheetVersionSetDoc extends Record<string, unknown> {
+  id: string;
+  name: string;
+  issuanceDate: string;
+  collection: ApsSheetCollectionRef | null;
 }
 
 export interface ApsSheetVersionSet extends Entity {
   project_id: string;
   version_set_id: string;
-  collection_id: string | null;
-  issuance_date: string;
-  payload: Record<string, unknown>;
+  payload: ApsSheetVersionSetDoc;
+}
+
+export interface ApsSheetVersionSetRef {
+  id: string;
+  name: string;
+  issuanceDate: string;
+  deleted: boolean;
+}
+
+export interface ApsSheetDoc extends Record<string, unknown> {
+  id: string;
+  number: string;
+  title: string;
+  tags: string[];
+  isCurrent: boolean;
+  deleted: boolean;
+  versionSet: ApsSheetVersionSetRef;
+  collection: ApsSheetCollectionRef | null;
 }
 
 export interface ApsSheet extends Entity {
   project_id: string;
   sheet_id: string;
-  version_set_id: string;
-  collection_id: string | null;
-  number: string;
-  title: string;
-  tags: string[];
-  is_current: boolean;
-  deleted: boolean;
-  payload: Record<string, unknown>;
+  payload: ApsSheetDoc;
 }
 
 export type ApsManifestDerivative = Record<string, unknown>;

@@ -1,17 +1,16 @@
-import type { AppEnv, Context, RouteContext } from "@emulators/core";
+import type { AppEnv, ContentfulStatusCode, Context, RouteContext } from "@emulators/core";
 import {
-  accProjectUser,
+  accMemberContext,
   commaSeparated,
-  issuesError,
+  findProjectResource,
   offsetEnvelope,
   pageItems,
-  projectForAccId,
   queryPagination,
-  userForApsRequest,
+  type AccRequestErrorKind,
 } from "../acc.js";
 import { apsAuth } from "../auth.js";
-import type { ApsAccProjectUser, ApsIssue, ApsProject, ApsUser } from "../entities.js";
-import { getApsStore, type ApsStore } from "../store.js";
+import type { ApsAccProjectUser, ApsIssue } from "../entities.js";
+import { getApsStore } from "../store.js";
 
 const ISSUE_STATUSES = [
   "draft",
@@ -41,30 +40,21 @@ const ISSUE_ATTRIBUTES = [
   "customAttributes",
 ];
 
-interface IssuesRequestContext {
-  project: ApsProject;
-  user: ApsUser;
-  member: ApsAccProjectUser;
+function issuesError(c: Context<AppEnv>, status: ContentfulStatusCode, title: string, detail: string): Response {
+  return c.json({ title, detail }, status);
 }
 
-async function requestContext(
-  c: Context<AppEnv>,
-  route: RouteContext,
-  aps: ApsStore,
-): Promise<IssuesRequestContext | Response> {
-  const projectResult = projectForAccId(aps, c.req.param("projectId"), "bare");
-  if (projectResult.kind === "invalid") {
-    return issuesError(c, 400, "Bad Request", "Issues project IDs must not include the 'b.' prefix.");
+function issuesRequestError(c: Context<AppEnv>, kind: AccRequestErrorKind): Response {
+  switch (kind) {
+    case "invalid-project-id":
+      return issuesError(c, 400, "Bad Request", "Issues project IDs must not include the 'b.' prefix.");
+    case "project-not-found":
+      return issuesError(c, 404, "Not Found", "The requested project was not found.");
+    case "user-required":
+      return issuesError(c, 403, "Forbidden", "User context is required.");
+    case "not-a-member":
+      return issuesError(c, 403, "Forbidden", "The user is not a member of this project.");
   }
-  if (projectResult.kind === "missing") {
-    return issuesError(c, 404, "Not Found", "The requested project was not found.");
-  }
-
-  const user = await userForApsRequest(c, route.store, aps, false);
-  if (!user) return issuesError(c, 403, "Forbidden", "User context is required.");
-  const member = accProjectUser(aps, projectResult.project.project_id, user.user_id);
-  if (!member) return issuesError(c, 403, "Forbidden", "The user is not a member of this project.");
-  return { project: projectResult.project, user, member };
 }
 
 function canManageIssues(member: ApsAccProjectUser): boolean {
@@ -89,7 +79,7 @@ function issuePermissions(member: ApsAccProjectUser, status: string) {
 function issuePayload(issue: ApsIssue, member: ApsAccProjectUser): Record<string, unknown> {
   return {
     ...structuredClone(issue.payload),
-    ...issuePermissions(member, issue.status),
+    ...issuePermissions(member, issue.payload.status),
   };
 }
 
@@ -107,47 +97,48 @@ function filterIssues(c: Context<AppEnv>, issues: ApsIssue[]): ApsIssue[] {
   const search = c.req.query("filter[search]")?.trim().toLocaleLowerCase();
   const deletedFilter = c.req.query("filter[deleted]");
 
-  let filtered = issues.filter((issue) => {
-    if (!matchesAny(issue.issue_id, ids)) return false;
-    if (!matchesAny(issue.issue_type_id, typeIds)) return false;
-    if (!matchesAny(issue.issue_subtype_id, subtypeIds)) return false;
-    if (!matchesAny(issue.status, statuses)) return false;
-    if (!matchesAny(issue.assigned_to, assignees)) return false;
-    if (displayIds.length > 0 && !displayIds.includes(String(issue.display_id))) return false;
-    if (deletedFilter === "true" && !issue.deleted) return false;
-    if ((deletedFilter === undefined || deletedFilter === "false") && issue.deleted) return false;
-    if (search && !issue.title.toLocaleLowerCase().includes(search) && !String(issue.display_id).includes(search)) {
+  return issues.filter(({ payload }) => {
+    if (!matchesAny(payload.id, ids)) return false;
+    if (!matchesAny(payload.issueTypeId, typeIds)) return false;
+    if (!matchesAny(payload.issueSubtypeId, subtypeIds)) return false;
+    if (!matchesAny(payload.status, statuses)) return false;
+    if (!matchesAny(payload.assignedTo, assignees)) return false;
+    if (displayIds.length > 0 && !displayIds.includes(String(payload.displayId))) return false;
+    if (deletedFilter === "true" && !payload.deleted) return false;
+    if ((deletedFilter === undefined || deletedFilter === "false") && payload.deleted) return false;
+    if (search && !payload.title.toLocaleLowerCase().includes(search) && !String(payload.displayId).includes(search)) {
       return false;
     }
     return true;
   });
+}
 
-  const requestedSort = commaSeparated(c.req.query("sortBy"))[0];
-  if (!requestedSort) return filtered;
+function sortIssues(issues: ApsIssue[], sortBy: string | undefined): ApsIssue[] {
+  const requestedSort = commaSeparated(sortBy)[0];
+  if (!requestedSort) return issues;
   const descending = requestedSort.startsWith("-");
   const field = descending ? requestedSort.slice(1) : requestedSort;
   const valueFor = (issue: ApsIssue): string | number => {
-    if (field === "displayId") return issue.display_id;
-    if (field === "title") return issue.title;
-    if (field === "status") return issue.status;
+    if (field === "displayId") return issue.payload.displayId;
     return String(issue.payload[field] ?? "");
   };
-  filtered = [...filtered].sort((left, right) => {
+  return [...issues].sort((left, right) => {
     const a = valueFor(left);
     const b = valueFor(right);
     const result = typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b));
     return descending ? -result : result;
   });
-  return filtered;
 }
 
 export function issueRoutes(route: RouteContext): void {
   const { app, store } = route;
   const aps = getApsStore(store);
+  const requestContext = (c: Context<AppEnv>) =>
+    accMemberContext(c, store, aps, { idRule: "bare", error: issuesRequestError });
   app.use("/construction/issues/v1/*", apsAuth(store, { scopes: ["data:read"], requireUser: true }));
 
-  app.get("/construction/issues/v1/projects/:projectId/users/me", async (c) => {
-    const context = await requestContext(c, route, aps);
+  app.get("/construction/issues/v1/projects/:projectId/users/me", (c) => {
+    const context = requestContext(c);
     if (context instanceof Response) return context;
     const manageable = canManageIssues(context.member);
     const permittedStatuses = manageable ? ISSUE_STATUSES : ["open", "closed"];
@@ -159,6 +150,8 @@ export function issueRoutes(route: RouteContext): void {
       canManageTemplates: manageable,
       issues: {
         new: {
+          // Both casings are emitted deliberately until the shape is verified
+          // against the live Issues API; clients have been seen reading either.
           permittedActions,
           permittedAttributes,
           permittedStatuses,
@@ -172,8 +165,8 @@ export function issueRoutes(route: RouteContext): void {
     });
   });
 
-  app.get("/construction/issues/v1/projects/:projectId/issue-types", async (c) => {
-    const context = await requestContext(c, route, aps);
+  app.get("/construction/issues/v1/projects/:projectId/issue-types", (c) => {
+    const context = requestContext(c);
     if (context instanceof Response) return context;
     const pagination = queryPagination(c, { defaultLimit: 200, maxLimit: 200 });
     if (!pagination.ok) return issuesError(c, 400, "Bad Request", pagination.message);
@@ -182,32 +175,32 @@ export function issueRoutes(route: RouteContext): void {
     const includeSubtypes = commaSeparated(c.req.query("include")).includes("subtypes");
     const resources = aps.issueTypes
       .findBy("project_id", context.project.project_id)
-      .filter((issueType) => isActive === undefined || issueType.is_active === (isActive === "true"));
+      .filter((issueType) => isActive === undefined || issueType.payload.isActive === (isActive === "true"));
     const results = pageItems(resources, pagination.value).map((issueType) => {
-      const payload = structuredClone(issueType.payload);
-      if (!includeSubtypes) delete payload.subtypes;
-      return payload;
+      const { subtypes, ...summary } = structuredClone(issueType.payload);
+      return includeSubtypes ? { ...summary, subtypes } : summary;
     });
     return c.json(offsetEnvelope(results, pagination.value, resources.length));
   });
 
-  app.get("/construction/issues/v1/projects/:projectId/issues", async (c) => {
-    const context = await requestContext(c, route, aps);
+  app.get("/construction/issues/v1/projects/:projectId/issues", (c) => {
+    const context = requestContext(c);
     if (context instanceof Response) return context;
     const pagination = queryPagination(c, { defaultLimit: 100, maxLimit: 100 });
     if (!pagination.ok) return issuesError(c, 400, "Bad Request", pagination.message);
 
-    const filtered = filterIssues(c, aps.issues.findBy("project_id", context.project.project_id));
+    const filtered = sortIssues(
+      filterIssues(c, aps.issues.findBy("project_id", context.project.project_id)),
+      c.req.query("sortBy"),
+    );
     const results = pageItems(filtered, pagination.value).map((issue) => issuePayload(issue, context.member));
     return c.json(offsetEnvelope(results, pagination.value, filtered.length));
   });
 
-  app.get("/construction/issues/v1/projects/:projectId/issues/:issueId", async (c) => {
-    const context = await requestContext(c, route, aps);
+  app.get("/construction/issues/v1/projects/:projectId/issues/:issueId", (c) => {
+    const context = requestContext(c);
     if (context instanceof Response) return context;
-    const issue = aps.issues
-      .findBy("project_id", context.project.project_id)
-      .find((candidate) => candidate.issue_id === c.req.param("issueId"));
+    const issue = findProjectResource(aps.issues, context.project.project_id, "issue_id", c.req.param("issueId"));
     if (!issue) return issuesError(c, 404, "Not Found", "The requested issue was not found.");
     return c.json(issuePayload(issue, context.member));
   });
