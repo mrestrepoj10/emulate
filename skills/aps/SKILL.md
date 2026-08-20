@@ -1,12 +1,12 @@
 ---
 name: aps
-description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management, and Model Derivative reads for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs and projects, supported translation formats, seeded manifests, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Forge OAuth", "Autodesk Forge", "APS hubs", "APS projects", "Model Derivative manifest", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", "Autodesk userinfo", or any task requiring a local APS API.
+description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management, Model Derivative, and Autodesk Construction Cloud workflow reads for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs and projects, supported translation formats, seeded manifests, Issues, RFIs, Sheets, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Model Derivative manifest", "ACC Issues", "ACC RFIs", "ACC Sheets", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
 allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 ---
 
 # Autodesk Platform Services (APS) Emulator
 
-APS authentication v2 emulation plus Data Management hub and project reads and Model Derivative format and manifest reads. Data routes validate the emulator's own RS256 token signature, expiry, revocation state, and `data:read` scope. Generic static emulator tokens are not accepted by these routes.
+APS authentication v2 emulation plus Data Management, Model Derivative, and ACC Issues, RFIs, and Sheets reads. Data routes validate the emulator's own RS256 token signature, expiry, revocation state, and `data:read` scope. Generic static emulator tokens are not accepted by these routes.
 
 ## Start
 
@@ -39,20 +39,23 @@ APS_EMULATOR_URL=http://localhost:4014
 
 Real APS paths map 1:1 onto the emulator:
 
-| Real APS URL                                                          | Emulator URL                                         |
-| --------------------------------------------------------------------- | ---------------------------------------------------- |
-| `https://developer.api.autodesk.com/authentication/v2/authorize`      | `$APS_EMULATOR_URL/authentication/v2/authorize`      |
-| `https://developer.api.autodesk.com/authentication/v2/token`          | `$APS_EMULATOR_URL/authentication/v2/token`          |
-| `https://developer.api.autodesk.com/authentication/v2/revoke`         | `$APS_EMULATOR_URL/authentication/v2/revoke`         |
-| `https://developer.api.autodesk.com/authentication/v2/introspect`     | `$APS_EMULATOR_URL/authentication/v2/introspect`     |
-| `https://developer.api.autodesk.com/authentication/v2/keys`           | `$APS_EMULATOR_URL/authentication/v2/keys`           |
-| `https://developer.api.autodesk.com/authentication/v2/logout`         | `$APS_EMULATOR_URL/authentication/v2/logout`         |
-| `https://developer.api.autodesk.com/project/v1/hubs`                  | `$APS_EMULATOR_URL/project/v1/hubs`                  |
-| `https://developer.api.autodesk.com/project/v1/hubs/:hubId/projects`  | `$APS_EMULATOR_URL/project/v1/hubs/:hubId/projects`  |
-| `https://developer.api.autodesk.com/modelderivative/v2/designdata/formats` | `$APS_EMULATOR_URL/modelderivative/v2/designdata/formats` |
+| Real APS URL                                                                     | Emulator URL                                                    |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `https://developer.api.autodesk.com/authentication/v2/authorize`                 | `$APS_EMULATOR_URL/authentication/v2/authorize`                 |
+| `https://developer.api.autodesk.com/authentication/v2/token`                     | `$APS_EMULATOR_URL/authentication/v2/token`                     |
+| `https://developer.api.autodesk.com/authentication/v2/revoke`                    | `$APS_EMULATOR_URL/authentication/v2/revoke`                    |
+| `https://developer.api.autodesk.com/authentication/v2/introspect`                | `$APS_EMULATOR_URL/authentication/v2/introspect`                |
+| `https://developer.api.autodesk.com/authentication/v2/keys`                      | `$APS_EMULATOR_URL/authentication/v2/keys`                      |
+| `https://developer.api.autodesk.com/authentication/v2/logout`                    | `$APS_EMULATOR_URL/authentication/v2/logout`                    |
+| `https://developer.api.autodesk.com/project/v1/hubs`                             | `$APS_EMULATOR_URL/project/v1/hubs`                             |
+| `https://developer.api.autodesk.com/project/v1/hubs/:hubId/projects`             | `$APS_EMULATOR_URL/project/v1/hubs/:hubId/projects`             |
+| `https://developer.api.autodesk.com/modelderivative/v2/designdata/formats`       | `$APS_EMULATOR_URL/modelderivative/v2/designdata/formats`       |
 | `https://developer.api.autodesk.com/modelderivative/v2/designdata/:urn/manifest` | `$APS_EMULATOR_URL/modelderivative/v2/designdata/:urn/manifest` |
-| `https://developer.api.autodesk.com/.well-known/openid-configuration` | `$APS_EMULATOR_URL/.well-known/openid-configuration` |
-| `https://api.userprofile.autodesk.com/userinfo`                       | `$APS_EMULATOR_URL/userinfo`                         |
+| `https://developer.api.autodesk.com/construction/issues/v1/...`                  | `$APS_EMULATOR_URL/construction/issues/v1/...`                  |
+| `https://developer.api.autodesk.com/construction/rfis/v3/...`                    | `$APS_EMULATOR_URL/construction/rfis/v3/...`                    |
+| `https://developer.api.autodesk.com/construction/sheets/v1/...`                  | `$APS_EMULATOR_URL/construction/sheets/v1/...`                  |
+| `https://developer.api.autodesk.com/.well-known/openid-configuration`            | `$APS_EMULATOR_URL/.well-known/openid-configuration`            |
+| `https://api.userprofile.autodesk.com/userinfo`                                  | `$APS_EMULATOR_URL/userinfo`                                    |
 
 ## Seed Config
 
@@ -80,6 +83,56 @@ aps:
     - id: b.emulate-project
       hub_id: b.emulate-hub
       name: Sample Building
+  acc_project_users:
+    - project_id: b.emulate-project
+      user_email: testuser@autodesk.local
+      role: project_admin
+      issue_permission: manage
+      rfi_roles: [project_admin, projectGC, projectSC]
+  issue_types:
+    - id: 11111111-1111-4111-8111-111111111111
+      project_id: b.emulate-project
+      title: Coordination
+      subtypes:
+        - id: 22222222-2222-4222-8222-222222222222
+          title: Clash
+  issues:
+    - id: 33333333-3333-4333-8333-333333333333
+      project_id: b.emulate-project
+      title: Door clearance conflict
+      issue_type_id: 11111111-1111-4111-8111-111111111111
+      issue_subtype_id: 22222222-2222-4222-8222-222222222222
+      status: open
+  rfi_types:
+    - id: 55555555-5555-4555-8555-555555555555
+      project_id: b.emulate-project
+      name: Design clarification
+      is_default: true
+  rfis:
+    - id: 77777777-7777-4777-8777-777777777777
+      project_id: b.emulate-project
+      rfi_type_id: 55555555-5555-4555-8555-555555555555
+      custom_identifier: RFI-001
+      title: Confirm structural opening
+      status: open
+  sheet_collections:
+    - id: 99999999-9999-4999-8999-999999999999
+      project_id: b.emulate-project
+      name: Issued for Construction
+  sheet_version_sets:
+    - id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+      project_id: b.emulate-project
+      name: August 2026 Issue
+      issuance_date: 2026-08-19
+      collection_id: 99999999-9999-4999-8999-999999999999
+  sheets:
+    - id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+      project_id: b.emulate-project
+      number: A-101
+      title: Level 1 Floor Plan
+      version_set_id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+      collection_id: 99999999-9999-4999-8999-999999999999
+      tags: [architectural, floor-plan]
   manifests:
     dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA:
       status: success
@@ -91,7 +144,7 @@ aps:
           progress: complete
 ```
 
-Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise. Every project `hub_id` must match a seeded hub. With no config, the emulator also seeds one hub, two projects, and a completed sample manifest.
+Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise. Every project `hub_id` must match a seeded hub. ACC resources use the Data Management project ID in seed config. With no config, the emulator also seeds one hub, two projects, one ACC project membership, sample workflow resources, and a completed sample manifest.
 
 ## 3-Legged Authorization Code Flow
 
@@ -186,6 +239,36 @@ curl "$APS_URL/modelderivative/v2/designdata/$SAMPLE_URN/manifest" \
 
 The optional `region` parameter is accepted and ignored. Unknown URNs return `404`, matching the real empty-body response.
 
+## ACC Workflow Reads
+
+Issues and RFIs require a 3-legged access token carrying `data:read`. Their project path parameter is the Data Management project ID with the `b.` prefix removed. Use the authorization code flow above, then inspect the default project:
+
+```bash
+PROJECT_ID="emulate-project"
+
+curl "$APS_URL/construction/issues/v1/projects/$PROJECT_ID/issues?limit=100" \
+  -H "Authorization: Bearer <3-legged-access-token>"
+
+curl -X POST "$APS_URL/construction/rfis/v3/projects/$PROJECT_ID/search:rfis" \
+  -H "Authorization: Bearer <3-legged-access-token>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Issues provides current-user permissions, issue types, issue lists, and issue details. RFIs provides current-user permissions, workflow, types, custom attributes, the next custom identifier, POST-based search, and RFI details. List responses use module-correct offset pagination, and permission fields are computed from `acc_project_users`.
+
+Sheets accepts either token type carrying `data:read` and accepts the project ID with or without `b.`. A 2-legged request can include `x-user-id` to impersonate a seeded project user:
+
+```bash
+curl "$APS_URL/construction/sheets/v1/projects/b.emulate-project/sheets" \
+  -H "Authorization: Bearer <2-legged-access-token>"
+
+curl "$APS_URL/construction/sheets/v1/projects/emulate-project/version-sets" \
+  -H "Authorization: Bearer <2-legged-access-token>"
+```
+
+Sheets provides sheet lists and batch reads, version-set lists, collection lists, and collection details. Its paginated lists include `previousUrl` and `nextUrl`.
+
 ## Refresh Token Flow
 
 ```bash
@@ -255,4 +338,4 @@ const { payload } = await jwtVerify(accessToken, jwks, {
 
 ## Current Limits
 
-Data Management folders, items, versions, OSS, write operations, translation jobs, other Model Derivative resources, ACC modules, pagination beyond one page, and APS webhooks are not included yet.
+Data Management folders, items, versions, OSS, write operations, translation jobs, other Model Derivative resources, ACC Forms, Submittals, Assets, Relationships, Model Coordination, Model Properties, ACC write endpoints, and APS webhooks are not included yet.

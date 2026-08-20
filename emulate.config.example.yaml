@@ -156,6 +156,73 @@ aps:
     - id: b.emulate-infrastructure
       hub_id: b.emulate-hub
       name: Sample Infrastructure
+  acc_project_users:
+    - project_id: b.emulate-project
+      user_email: testuser@autodesk.local
+      role: project_admin
+      issue_permission: manage
+      rfi_roles:
+        - project_admin
+        - projectGC
+        - projectSC
+  issue_types:
+    - id: 11111111-1111-4111-8111-111111111111
+      project_id: b.emulate-project
+      title: Coordination
+      subtypes:
+        - id: 22222222-2222-4222-8222-222222222222
+          title: Clash
+          code: CLASH
+  issues:
+    - id: 33333333-3333-4333-8333-333333333333
+      project_id: b.emulate-project
+      title: Door clearance conflict
+      description: The door conflicts with the adjacent wall finish.
+      issue_type_id: 11111111-1111-4111-8111-111111111111
+      issue_subtype_id: 22222222-2222-4222-8222-222222222222
+      status: open
+      assigned_to: testuser@autodesk.local
+      due_date: 2026-08-26
+  rfi_types:
+    - id: 55555555-5555-4555-8555-555555555555
+      project_id: b.emulate-project
+      name: Design clarification
+      is_default: true
+      workflow_type: US
+  rfi_attributes:
+    - id: 66666666-6666-4666-8666-666666666666
+      project_id: b.emulate-project
+      name: Specification section
+      type: text
+  rfis:
+    - id: 77777777-7777-4777-8777-777777777777
+      project_id: b.emulate-project
+      rfi_type_id: 55555555-5555-4555-8555-555555555555
+      custom_identifier: RFI-001
+      title: Confirm structural opening
+      question: What dimensions should be used for the structural opening?
+      status: open
+      priority: High
+  sheet_collections:
+    - id: 99999999-9999-4999-8999-999999999999
+      project_id: b.emulate-project
+      name: Issued for Construction
+  sheet_version_sets:
+    - id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+      project_id: b.emulate-project
+      name: August 2026 Issue
+      issuance_date: 2026-08-19
+      collection_id: 99999999-9999-4999-8999-999999999999
+  sheets:
+    - id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+      project_id: b.emulate-project
+      number: A-101
+      title: Level 1 Floor Plan
+      version_set_id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+      collection_id: 99999999-9999-4999-8999-999999999999
+      tags:
+        - architectural
+        - floor-plan
   manifests:
     dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA:
       status: success

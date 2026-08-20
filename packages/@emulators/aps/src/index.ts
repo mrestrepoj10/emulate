@@ -13,8 +13,12 @@ import {
   splitName,
 } from "./helpers.js";
 import { dataManagementRoutes } from "./routes/data-management.js";
+import { issueRoutes } from "./routes/issues.js";
 import { modelDerivativeRoutes } from "./routes/model-derivative.js";
 import { oauthRoutes } from "./routes/oauth.js";
+import { rfiRoutes } from "./routes/rfis.js";
+import { sheetRoutes } from "./routes/sheets.js";
+import { seedAccFromConfig } from "./seed-acc.js";
 import { getApsStore } from "./store.js";
 
 export { getApsStore, type ApsStore } from "./store.js";
@@ -96,6 +100,8 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedCo
     }
   }
 
+  seedAccFromConfig(aps, config);
+
   if (config.manifests) {
     for (const [urn, manifest] of Object.entries(config.manifests)) {
       if (aps.manifests.findOneBy("urn", urn)) continue;
@@ -120,6 +126,9 @@ export const apsPlugin: ServicePlugin = {
     oauthRoutes(ctx);
     dataManagementRoutes(ctx);
     modelDerivativeRoutes(ctx);
+    issueRoutes(ctx);
+    rfiRoutes(ctx);
+    sheetRoutes(ctx);
   },
   seed(store: Store, baseUrl: string): void {
     seedDefaults(store, baseUrl);

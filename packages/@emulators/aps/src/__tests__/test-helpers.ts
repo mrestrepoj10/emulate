@@ -129,8 +129,13 @@ export async function issueTwoLeggedToken(app: Hono, scope = "data:read"): Promi
   return body.access_token;
 }
 
-export async function issueThreeLeggedToken(app: Hono, store: Store, scope = "data:read"): Promise<string> {
-  const { code } = await getAuthCode(app, store, { scope, state: "data-routes-test" });
+export async function issueThreeLeggedToken(
+  app: Hono,
+  store: Store,
+  scope = "data:read",
+  userId?: string,
+): Promise<string> {
+  const { code } = await getAuthCode(app, store, { scope, state: "data-routes-test", userId });
   if (!code) throw new Error("Could not issue APS authorization code for test");
   const response = await exchangeCode(app, code);
   if (!response.ok) throw new Error(`Could not issue 3-legged test token: ${response.status}`);
