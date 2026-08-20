@@ -28,6 +28,22 @@ describe("internal http layer", () => {
     expect(calls).toEqual(["before:GET", "yes", "after"]);
   });
 
+  it("applies wildcard middleware only within its path prefix", async () => {
+    const app = new Hono();
+    app.use("/project/v1/*", async (c, next) => {
+      c.header("X-Project-Middleware", "applied");
+      await next();
+    });
+    app.get("/project/v1/hubs", (c) => c.json([]));
+    app.get("/authentication/v2/token", (c) => c.json({ token: true }));
+
+    const project = await app.request("/project/v1/hubs");
+    const authentication = await app.request("/authentication/v2/token");
+
+    expect(project.headers.get("X-Project-Middleware")).toBe("applied");
+    expect(authentication.headers.get("X-Project-Middleware")).toBeNull();
+  });
+
   it("respects explicit content type headers", async () => {
     const app = new Hono();
     app.get("/object", (c) => c.text("hello", 200, { "Content-Type": "text/plain" }));

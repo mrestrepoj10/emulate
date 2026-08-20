@@ -144,3 +144,24 @@ aps:
       type: public
       redirect_uris:
         - http://localhost:3000/callback
+  hubs:
+    - id: b.emulate-hub
+      name: Emulate Construction Hub
+      region: US
+  projects:
+    # Each project hub_id must match a seeded hub.
+    - id: b.emulate-project
+      hub_id: b.emulate-hub
+      name: Sample Building
+    - id: b.emulate-infrastructure
+      hub_id: b.emulate-hub
+      name: Sample Infrastructure
+  manifests:
+    dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA:
+      status: success
+      progress: complete
+      region: US
+      derivatives:
+        - outputType: svf2
+          status: success
+          progress: complete

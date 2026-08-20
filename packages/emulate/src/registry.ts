@@ -654,9 +654,8 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
   },
 
   aps: {
-    label: "Autodesk Platform Services (APS) OAuth emulator",
-    endpoints:
-      "OAuth authorize, token exchange (authorization code, refresh token, client credentials), token revocation, introspection, JWKS, logout, userinfo, OIDC discovery",
+    label: "Autodesk Platform Services (APS) emulator",
+    endpoints: "OAuth, userinfo, hubs, projects, Model Derivative formats and manifests",
     async load() {
       const mod = await import("@emulators/aps");
       return { plugin: mod.apsPlugin, seedFromConfig: mod.seedFromConfig };
@@ -679,6 +678,19 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
             ],
           },
         ],
+        hubs: [{ id: "b.emulate-hub", name: "Emulate Construction Hub", region: "US" }],
+        projects: [
+          { id: "b.emulate-project", hub_id: "b.emulate-hub", name: "Sample Building" },
+          { id: "b.emulate-infrastructure", hub_id: "b.emulate-hub", name: "Sample Infrastructure" },
+        ],
+        manifests: {
+          dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA: {
+            status: "success",
+            progress: "complete",
+            region: "US",
+            derivatives: [{ outputType: "svf2", status: "success", progress: "complete" }],
+          },
+        },
       },
     },
   },

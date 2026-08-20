@@ -24,6 +24,9 @@ Framework adapters:
 GitHub API coverage:
   Includes repository contents, raw downloads, commit history, commit details, and ref comparisons.
 
+APS API coverage:
+  Includes OAuth, userinfo, Data Management hubs and projects, plus Model Derivative formats and manifests.
+
 Webhook signatures:
   Stripe webhook secrets produce a Stripe-Signature header for raw-body verification.
 `,

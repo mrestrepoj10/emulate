@@ -1,6 +1,6 @@
 import type { Hono } from "@emulators/core";
 import type { AppEnv, RouteContext, ServicePlugin, Store, TokenMap, WebhookDispatcher } from "@emulators/core";
-import type { ApsClientType } from "./entities.js";
+import { DEFAULT_DATA_SEED, type ApsSeedConfig } from "./config.js";
 import {
   createDefaultConfidentialClient,
   createDefaultPublicClient,
@@ -12,29 +12,16 @@ import {
   normalizeClientType,
   splitName,
 } from "./helpers.js";
+import { dataManagementRoutes } from "./routes/data-management.js";
+import { modelDerivativeRoutes } from "./routes/model-derivative.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { getApsStore } from "./store.js";
 
 export { getApsStore, type ApsStore } from "./store.js";
+export { DEFAULT_DATA_SEED, type ApsSeedConfig } from "./config.js";
 export * from "./entities.js";
 
-export interface ApsSeedConfig {
-  clients?: Array<{
-    client_id: string;
-    client_secret?: string;
-    name?: string;
-    type?: ApsClientType;
-    redirect_uris: string[];
-  }>;
-  users?: Array<{
-    user_id?: string;
-    email: string;
-    name?: string;
-    picture?: string;
-  }>;
-}
-
-function seedDefaults(store: Store, _baseUrl: string): void {
+function seedDefaults(store: Store, baseUrl: string): void {
   const aps = getApsStore(store);
 
   if (!aps.clients.findOneBy("client_id", DEFAULT_CONFIDENTIAL_CLIENT_ID)) {
@@ -46,6 +33,7 @@ function seedDefaults(store: Store, _baseUrl: string): void {
   if (!aps.users.findOneBy("email", DEFAULT_USER_EMAIL)) {
     aps.users.insert(createDefaultUser());
   }
+  seedFromConfig(store, baseUrl, DEFAULT_DATA_SEED);
 }
 
 export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedConfig): void {
@@ -82,6 +70,47 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedCo
       });
     }
   }
+
+  if (config.hubs) {
+    for (const hub of config.hubs) {
+      if (aps.hubs.findOneBy("hub_id", hub.id)) continue;
+      aps.hubs.insert({
+        hub_id: hub.id,
+        name: hub.name,
+        region: hub.region ?? "US",
+      });
+    }
+  }
+
+  if (config.projects) {
+    for (const project of config.projects) {
+      if (aps.projects.findOneBy("project_id", project.id)) continue;
+      if (!aps.hubs.findOneBy("hub_id", project.hub_id)) {
+        throw new Error(`APS project '${project.id}' references unknown hub '${project.hub_id}'.`);
+      }
+      aps.projects.insert({
+        project_id: project.id,
+        hub_id: project.hub_id,
+        name: project.name,
+      });
+    }
+  }
+
+  if (config.manifests) {
+    for (const [urn, manifest] of Object.entries(config.manifests)) {
+      if (aps.manifests.findOneBy("urn", urn)) continue;
+      aps.manifests.insert({
+        urn,
+        type: manifest.type ?? "manifest",
+        hasThumbnail: manifest.hasThumbnail ?? "false",
+        status: manifest.status ?? "success",
+        progress: manifest.progress ?? "complete",
+        region: manifest.region ?? "US",
+        version: manifest.version ?? "1.0",
+        derivatives: structuredClone(manifest.derivatives ?? []),
+      });
+    }
+  }
 }
 
 export const apsPlugin: ServicePlugin = {
@@ -89,6 +118,8 @@ export const apsPlugin: ServicePlugin = {
   register(app: Hono<AppEnv>, store: Store, webhooks: WebhookDispatcher, baseUrl: string, tokenMap?: TokenMap): void {
     const ctx: RouteContext = { app, store, webhooks, baseUrl, tokenMap };
     oauthRoutes(ctx);
+    dataManagementRoutes(ctx);
+    modelDerivativeRoutes(ctx);
   },
   seed(store: Store, baseUrl: string): void {
     seedDefaults(store, baseUrl);

@@ -409,6 +409,24 @@ aps:
       type: public
       redirect_uris:
         - http://localhost:3000/callback
+  hubs:
+    - id: b.emulate-hub
+      name: Emulate Construction Hub
+      region: US
+  projects:
+    - id: b.emulate-project
+      hub_id: b.emulate-hub
+      name: Sample Building
+  manifests:
+    dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA:
+      status: success
+      progress: complete
+      region: US
+      derivatives:
+        - outputType: svf2
+          status: success
+          progress: complete
 ```
 
 Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise.
+Every APS project `hub_id` must match a hub in the effective seed data.

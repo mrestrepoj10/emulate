@@ -975,9 +975,9 @@ To test inbound SMS webhooks, configure a seeded phone number `sms_url`, then ca
 
 Current Twilio limits: no carrier delivery, A2P 10DLC, toll-free verification, real phone number purchasing, exact rate limits, Studio, Flex, TaskRouter, Video, Sync, Segment, SendGrid, Conversations SDK websocket behavior, or complete TwiML interpreter.
 
-## Autodesk Platform Services (APS) OAuth
+## Autodesk Platform Services (APS)
 
-Autodesk Platform Services (formerly Forge) authentication v2 emulation with the 3-legged authorization code flow, PKCE, the 2-legged client credentials flow, rotating single-use refresh tokens, RS256 access tokens, token introspection and revocation, and OIDC discovery.
+Autodesk Platform Services (formerly Forge) emulation with authentication v2, Data Management hub and project reads, and Model Derivative format and manifest reads. Every data route verifies the emulator's RS256 access tokens, expiry, revocation state, and `data:read` scope. Generic static emulator tokens are not accepted by APS data routes.
 
 - `GET /.well-known/openid-configuration` - OIDC discovery document
 - `GET /authentication/v2/keys` - JSON Web Key Set (JWKS)
@@ -987,15 +987,23 @@ Autodesk Platform Services (formerly Forge) authentication v2 emulation with the
 - `POST /authentication/v2/introspect` - token introspection
 - `GET /authentication/v2/logout` - end session / logout
 - `GET /userinfo` - user profile
+- `GET /project/v1/hubs` - list hubs with a 3-legged token
+- `GET /project/v1/hubs/:hubId` - get a hub with a 3-legged token
+- `GET /project/v1/hubs/:hubId/projects` - list projects with a 3-legged token
+- `GET /project/v1/hubs/:hubId/projects/:projectId` - get a project with a 3-legged token
+- `GET /modelderivative/v2/designdata/formats` - list translation formats with a 2-legged or 3-legged token
+- `GET /modelderivative/v2/designdata/:urn/manifest` - get a seeded manifest with a 2-legged or 3-legged token
 
 Real APS paths map 1:1 onto the emulator:
 
 | Real APS URL | Emulator URL |
 |--------------|--------------|
 | `https://developer.api.autodesk.com/authentication/v2/...` | `$APS_EMULATOR_URL/authentication/v2/...` |
+| `https://developer.api.autodesk.com/project/v1/...` | `$APS_EMULATOR_URL/project/v1/...` |
+| `https://developer.api.autodesk.com/modelderivative/v2/...` | `$APS_EMULATOR_URL/modelderivative/v2/...` |
 | `https://api.userprofile.autodesk.com/userinfo` | `$APS_EMULATOR_URL/userinfo` |
 
-With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, and a user `testuser@autodesk.local`. Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Authorization codes are single use and expire after 5 minutes. Refresh tokens live for 15 days and are single use: every refresh returns a new refresh token, and replaying an already-used refresh token invalidates the whole grant family, matching real APS behavior. PKCE supports `S256` only and is required for public clients.
+With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, a user `testuser@autodesk.local`, one hub, two projects, and a completed manifest at `dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA`. Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Authorization codes are single use and expire after 5 minutes. Refresh tokens live for 15 days and are single use: every refresh returns a new refresh token, and replaying an already-used refresh token invalidates the whole grant family, matching real APS behavior. PKCE supports `S256` only and is required for public clients.
 
 ```yaml
 aps:
@@ -1013,11 +1021,29 @@ aps:
       type: public
       redirect_uris:
         - http://localhost:3000/callback
+  hubs:
+    - id: b.emulate-hub
+      name: Emulate Construction Hub
+      region: US
+  projects:
+    - id: b.emulate-project
+      hub_id: b.emulate-hub
+      name: Sample Building
+  manifests:
+    dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA:
+      status: success
+      progress: complete
+      region: US
+      derivatives:
+        - outputType: svf2
+          status: success
+          progress: complete
 ```
 
 Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise.
+Every project `hub_id` must match a seeded hub.
 
-Current APS limits: only authentication v2 and the user profile endpoint are emulated. Data APIs such as Data Management, Model Derivative, ACC/BIM 360, and APS webhooks are not included yet.
+Current APS limits: Data Management folders, items, versions, OSS, write operations, translation jobs, other Model Derivative resources, ACC modules, pagination beyond one page, and APS webhooks are not included yet.
 
 ## Apple Sign In
 

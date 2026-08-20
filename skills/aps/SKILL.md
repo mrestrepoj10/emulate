@@ -1,12 +1,12 @@
 ---
 name: aps
-description: Emulated Autodesk Platform Services (APS) OAuth 2.0 for local development and testing. Use when the user needs to test Autodesk sign-in locally, emulate APS authentication v2, handle APS token exchange, configure APS OAuth clients, or work with Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Forge OAuth", "Autodesk Forge", "emulate Autodesk login", "test APS 3-legged flow", "APS 2-legged token", "APS client credentials", "APS refresh token", "Autodesk userinfo", "mock Autodesk sign-in", or any task requiring a local APS authentication API.
+description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management, and Model Derivative reads for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs and projects, supported translation formats, seeded manifests, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Forge OAuth", "Autodesk Forge", "APS hubs", "APS projects", "Model Derivative manifest", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", "Autodesk userinfo", or any task requiring a local APS API.
 allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 ---
 
-# Autodesk Platform Services (APS) OAuth Emulator
+# Autodesk Platform Services (APS) Emulator
 
-APS authentication v2 emulation with the 3-legged authorization code flow, PKCE support, the 2-legged client credentials flow, rotating single-use refresh tokens, RS256 access tokens, token introspection and revocation, and OIDC discovery.
+APS authentication v2 emulation plus Data Management hub and project reads and Model Derivative format and manifest reads. Data routes validate the emulator's own RS256 token signature, expiry, revocation state, and `data:read` scope. Generic static emulator tokens are not accepted by these routes.
 
 ## Start
 
@@ -35,7 +35,7 @@ const aps = await createEmulator({ service: "aps", port: 4014 });
 APS_EMULATOR_URL=http://localhost:4014
 ```
 
-### OAuth URL Mapping
+### URL Mapping
 
 Real APS paths map 1:1 onto the emulator:
 
@@ -47,6 +47,10 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/authentication/v2/introspect`     | `$APS_EMULATOR_URL/authentication/v2/introspect`     |
 | `https://developer.api.autodesk.com/authentication/v2/keys`           | `$APS_EMULATOR_URL/authentication/v2/keys`           |
 | `https://developer.api.autodesk.com/authentication/v2/logout`         | `$APS_EMULATOR_URL/authentication/v2/logout`         |
+| `https://developer.api.autodesk.com/project/v1/hubs`                  | `$APS_EMULATOR_URL/project/v1/hubs`                  |
+| `https://developer.api.autodesk.com/project/v1/hubs/:hubId/projects`  | `$APS_EMULATOR_URL/project/v1/hubs/:hubId/projects`  |
+| `https://developer.api.autodesk.com/modelderivative/v2/designdata/formats` | `$APS_EMULATOR_URL/modelderivative/v2/designdata/formats` |
+| `https://developer.api.autodesk.com/modelderivative/v2/designdata/:urn/manifest` | `$APS_EMULATOR_URL/modelderivative/v2/designdata/:urn/manifest` |
 | `https://developer.api.autodesk.com/.well-known/openid-configuration` | `$APS_EMULATOR_URL/.well-known/openid-configuration` |
 | `https://api.userprofile.autodesk.com/userinfo`                       | `$APS_EMULATOR_URL/userinfo`                         |
 
@@ -68,9 +72,26 @@ aps:
       type: public
       redirect_uris:
         - http://localhost:3000/callback
+  hubs:
+    - id: b.emulate-hub
+      name: Emulate Construction Hub
+      region: US
+  projects:
+    - id: b.emulate-project
+      hub_id: b.emulate-hub
+      name: Sample Building
+  manifests:
+    dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA:
+      status: success
+      progress: complete
+      region: US
+      derivatives:
+        - outputType: svf2
+          status: success
+          progress: complete
 ```
 
-Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise. With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, and a user `testuser@autodesk.local`.
+Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise. Every project `hub_id` must match a seeded hub. With no config, the emulator also seeds one hub, two projects, and a completed sample manifest.
 
 ## 3-Legged Authorization Code Flow
 
@@ -134,6 +155,36 @@ curl -X POST $APS_URL/authentication/v2/token \
 ```
 
 Returns an `access_token` without a `refresh_token` or `id_token`.
+
+## Data Management Reads
+
+Hub and project routes require a 3-legged access token carrying `data:read` and a `userid` claim. Use the authorization code flow above, then walk the seeded data:
+
+```bash
+curl "$APS_URL/project/v1/hubs" \
+  -H "Authorization: Bearer <3-legged-access-token>"
+
+curl "$APS_URL/project/v1/hubs/b.emulate-hub/projects" \
+  -H "Authorization: Bearer <3-legged-access-token>"
+```
+
+The four available reads are `GET /project/v1/hubs`, `GET /project/v1/hubs/:hubId`, `GET /project/v1/hubs/:hubId/projects`, and `GET /project/v1/hubs/:hubId/projects/:projectId`. Responses use JSON:API envelopes with `jsonapi`, `links`, `data`, `attributes`, and `relationships`.
+
+## Model Derivative Reads
+
+Formats and manifests accept either a 2-legged or 3-legged token carrying `data:read`. After obtaining the 2-legged token above:
+
+```bash
+SAMPLE_URN="dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA"
+
+curl "$APS_URL/modelderivative/v2/designdata/formats" \
+  -H "Authorization: Bearer <2-legged-access-token>"
+
+curl "$APS_URL/modelderivative/v2/designdata/$SAMPLE_URN/manifest" \
+  -H "Authorization: Bearer <2-legged-access-token>"
+```
+
+The optional `region` parameter is accepted and ignored. Unknown URNs return `404`, matching the real empty-body response.
 
 ## Refresh Token Flow
 
@@ -204,4 +255,4 @@ const { payload } = await jwtVerify(accessToken, jwks, {
 
 ## Current Limits
 
-Only authentication v2 and the user profile endpoint are emulated. Data APIs such as Data Management, Model Derivative, ACC/BIM 360, and APS webhooks are not included yet.
+Data Management folders, items, versions, OSS, write operations, translation jobs, other Model Derivative resources, ACC modules, pagination beyond one page, and APS webhooks are not included yet.

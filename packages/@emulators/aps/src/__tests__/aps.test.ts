@@ -1,132 +1,9 @@
 import { createHash } from "node:crypto";
 import { createLocalJWKSet, decodeJwt, jwtVerify } from "jose";
-import { Hono } from "@emulators/core";
+import type { Hono, Store, TokenMap } from "@emulators/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Store, WebhookDispatcher, authMiddleware, type TokenMap } from "@emulators/core";
-import { apsPlugin, getApsStore, seedFromConfig } from "../index.js";
-
-const base = "http://localhost:4000";
-
-function createTestApp() {
-  const store = new Store();
-  const webhooks = new WebhookDispatcher();
-  const tokenMap: TokenMap = new Map();
-
-  const app = new Hono();
-  app.use("*", authMiddleware(tokenMap));
-  apsPlugin.register(app as any, store, webhooks, base, tokenMap);
-  apsPlugin.seed?.(store, base);
-  seedFromConfig(store, base, {
-    users: [{ email: "alice@example.com", name: "Alice Example" }],
-    clients: [
-      {
-        client_id: "custom-client",
-        client_secret: "custom-secret",
-        name: "Custom App",
-        redirect_uris: ["http://localhost:3000/custom-callback"],
-      },
-    ],
-  });
-  return { app, store, tokenMap };
-}
-
-async function getAuthCode(
-  app: Hono,
-  store: Store,
-  options: {
-    userId?: string;
-    redirectUri?: string;
-    clientId?: string;
-    scope?: string;
-    state?: string;
-    nonce?: string;
-    responseMode?: string;
-    codeChallenge?: string;
-  } = {},
-): Promise<{ code: string; state: string; response: Response }> {
-  const aps = getApsStore(store);
-  const userId = options.userId ?? aps.users.all()[0]?.user_id ?? "";
-  const redirectUri = options.redirectUri ?? "http://localhost:3000/callback";
-  const clientId = options.clientId ?? "aps-test-client";
-  const scope = options.scope ?? "data:read openid";
-  const state = options.state ?? "state-1";
-  const nonce = options.nonce ?? "nonce-1";
-  const responseMode = options.responseMode ?? "query";
-
-  const formData = new URLSearchParams({
-    user_id: userId,
-    redirect_uri: redirectUri,
-    scope,
-    state,
-    nonce,
-    client_id: clientId,
-    response_mode: responseMode,
-    code_challenge: options.codeChallenge ?? "",
-  });
-
-  const response = await app.request(`${base}/authentication/v2/authorize/callback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: formData.toString(),
-  });
-
-  if (responseMode === "form_post") {
-    const html = await response.text();
-    const code = html.match(/name="code" value="([^"]+)"/)?.[1] ?? "";
-    const returnedState = html.match(/name="state" value="([^"]+)"/)?.[1] ?? "";
-    return { code, state: returnedState, response };
-  }
-
-  const location = response.headers.get("location") ?? "";
-  const locationUrl = new URL(location);
-  return {
-    code: locationUrl.searchParams.get("code") ?? "",
-    state: locationUrl.searchParams.get("state") ?? "",
-    response,
-  };
-}
-
-async function exchangeCode(
-  app: Hono,
-  code: string,
-  options: {
-    clientId?: string;
-    clientSecret?: string;
-    includeClientSecret?: boolean;
-    redirectUri?: string;
-    codeVerifier?: string;
-    useBasicAuth?: boolean;
-  } = {},
-): Promise<Response> {
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    code,
-    client_id: options.clientId ?? "aps-test-client",
-    redirect_uri: options.redirectUri ?? "http://localhost:3000/callback",
-  });
-  if (options.includeClientSecret ?? true) {
-    body.set("client_secret", options.clientSecret ?? "aps-test-secret");
-  }
-  if (options.codeVerifier) {
-    body.set("code_verifier", options.codeVerifier);
-  }
-
-  const headers: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded" };
-  if (options.useBasicAuth) {
-    const creds = Buffer.from(
-      `${options.clientId ?? "aps-test-client"}:${options.clientSecret ?? "aps-test-secret"}`,
-    ).toString("base64");
-    headers.Authorization = `Basic ${creds}`;
-    body.delete("client_id");
-    body.delete("client_secret");
-  }
-
-  return app.request(`${base}/authentication/v2/token`, {
-    method: "POST",
-    headers,
-    body: body.toString(),
-  });
-}
+import { getApsStore, seedFromConfig } from "../index.js";
+import { base, createTestApp, exchangeCode, getAuthCode } from "./test-helpers.js";
 
 async function refreshGrant(app: Hono, refreshToken: string, options: { scope?: string } = {}): Promise<Response> {
   const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken });
@@ -159,7 +36,17 @@ describe("APS plugin integration", () => {
   let tokenMap: TokenMap;
 
   beforeEach(() => {
-    const setup = createTestApp();
+    const setup = createTestApp({
+      users: [{ email: "alice@example.com", name: "Alice Example" }],
+      clients: [
+        {
+          client_id: "custom-client",
+          client_secret: "custom-secret",
+          name: "Custom App",
+          redirect_uris: ["http://localhost:3000/custom-callback"],
+        },
+      ],
+    });
     app = setup.app;
     store = setup.store;
     tokenMap = setup.tokenMap;
@@ -870,13 +757,7 @@ describe("APS plugin integration", () => {
 
   describe("seed from config", () => {
     it("seeds clients and users and deduplicates", () => {
-      const seedStore = new Store();
-      const webhooks = new WebhookDispatcher();
-      const localTokenMap: TokenMap = new Map();
-      const localApp = new Hono();
-      localApp.use("*", authMiddleware(localTokenMap));
-      apsPlugin.register(localApp as any, seedStore, webhooks, base, localTokenMap);
-      apsPlugin.seed?.(seedStore, base);
+      const seedStore = createTestApp().store;
 
       seedFromConfig(seedStore, base, {
         users: [

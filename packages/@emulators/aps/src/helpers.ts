@@ -5,6 +5,9 @@ export const DEFAULT_CONFIDENTIAL_CLIENT_ID = "aps-test-client";
 export const DEFAULT_CONFIDENTIAL_CLIENT_SECRET = "aps-test-secret";
 export const DEFAULT_PUBLIC_CLIENT_ID = "aps-test-app";
 export const DEFAULT_USER_EMAIL = "testuser@autodesk.local";
+export const DEFAULT_HUB_ID = "b.emulate-hub";
+export const DEFAULT_PROJECT_ID = "b.emulate-project";
+export const DEFAULT_MANIFEST_URN = "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA";
 
 export const SUPPORTED_SCOPES = [
   "user-profile:read",

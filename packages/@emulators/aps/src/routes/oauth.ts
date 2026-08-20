@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { SignJWT, exportJWK, generateKeyPair } from "jose";
+import { SignJWT, exportJWK } from "jose";
 import type { Context } from "@emulators/core";
 import type { AppEnv, RouteContext, Store, TokenMap } from "@emulators/core";
 import {
@@ -15,6 +15,15 @@ import {
 } from "@emulators/core";
 import type { ApsClient, ApsUser } from "../entities.js";
 import {
+  accessTokenForRequest,
+  APS_TOKEN_AUDIENCE,
+  APS_TOKEN_ISSUER,
+  APS_TOKEN_KID,
+  findActiveAccessToken,
+  getAccessTokens,
+  getApsKeyPair,
+} from "../auth.js";
+import {
   analyticsIdFor,
   generateAuthorizationCode,
   generateJti,
@@ -27,9 +36,6 @@ import {
 import { getApsStore, type ApsStore } from "../store.js";
 
 const SERVICE_LABEL = "Autodesk Platform Services";
-const KID = "emulate-aps-1";
-const TOKEN_ISSUER = "https://developer.api.autodesk.com";
-const TOKEN_AUDIENCE = "https://autodesk.com";
 const AUTHORIZATION_CODE_TTL_MS = 5 * 60 * 1000;
 const ACCESS_TOKEN_TTL_SECONDS = 3600;
 const ACCESS_TOKEN_EXPIRES_IN = 3599;
@@ -46,15 +52,6 @@ type PendingCode = {
   createdAt: number;
 };
 
-type StoredAccessToken = {
-  clientId: string;
-  scope: string;
-  issuedAt: number;
-  expiresAt: number;
-  apsUserId: string | null;
-  familyId: string | null;
-};
-
 type StoredRefreshToken = {
   clientId: string;
   scope: string;
@@ -63,31 +60,11 @@ type StoredRefreshToken = {
   expiresAt: number;
 };
 
-type KeyPair = Awaited<ReturnType<typeof generateKeyPair>>;
-
-function getKeyPair(store: Store): Promise<KeyPair> {
-  let pair = store.getData<Promise<KeyPair>>("aps.oauth.keyPair");
-  if (!pair) {
-    pair = generateKeyPair("RS256");
-    store.setData("aps.oauth.keyPair", pair);
-  }
-  return pair;
-}
-
 function getPendingCodes(store: Store): Map<string, PendingCode> {
   let map = store.getData<Map<string, PendingCode>>("aps.oauth.pendingCodes");
   if (!map) {
     map = new Map();
     store.setData("aps.oauth.pendingCodes", map);
-  }
-  return map;
-}
-
-function getAccessTokens(store: Store): Map<string, StoredAccessToken> {
-  let map = store.getData<Map<string, StoredAccessToken>>("aps.oauth.accessTokens");
-  if (!map) {
-    map = new Map();
-    store.setData("aps.oauth.accessTokens", map);
   }
   return map;
 }
@@ -214,7 +191,7 @@ async function signAccessToken(
   store: Store,
   options: { clientId: string; scope: string; apsUserId: string | null; now: number },
 ): Promise<string> {
-  const { privateKey } = await getKeyPair(store);
+  const { privateKey } = await getApsKeyPair(store);
   const claims: Record<string, unknown> = {
     scope: parseScope(options.scope),
     client_id: options.clientId,
@@ -222,9 +199,9 @@ async function signAccessToken(
   };
   if (options.apsUserId) claims.userid = options.apsUserId;
   return new SignJWT(claims)
-    .setProtectedHeader({ alg: "RS256", kid: KID })
-    .setIssuer(TOKEN_ISSUER)
-    .setAudience(TOKEN_AUDIENCE)
+    .setProtectedHeader({ alg: "RS256", kid: APS_TOKEN_KID })
+    .setIssuer(APS_TOKEN_ISSUER)
+    .setAudience(APS_TOKEN_AUDIENCE)
     .setExpirationTime(options.now + ACCESS_TOKEN_TTL_SECONDS)
     .sign(privateKey);
 }
@@ -237,7 +214,7 @@ async function createIdToken(
   baseUrl: string,
   now: number,
 ): Promise<string> {
-  const { privateKey } = await getKeyPair(store);
+  const { privateKey } = await getApsKeyPair(store);
   const claims: Record<string, unknown> = {
     sub: user.user_id,
     first_name: user.first_name,
@@ -249,7 +226,7 @@ async function createIdToken(
   };
   if (nonce) claims.nonce = nonce;
   return new SignJWT(claims)
-    .setProtectedHeader({ alg: "RS256", kid: KID, typ: "JWT" })
+    .setProtectedHeader({ alg: "RS256", kid: APS_TOKEN_KID, typ: "JWT" })
     .setIssuer(baseUrl)
     .setAudience(clientId)
     .setIssuedAt(now)
@@ -279,11 +256,11 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
   });
 
   app.get("/authentication/v2/keys", async (c) => {
-    const { publicKey } = await getKeyPair(store);
+    const { publicKey } = await getApsKeyPair(store);
     const jwk = await exportJWK(publicKey);
     c.header("Cache-Control", "max-age=604800");
     return c.json({
-      keys: [{ kty: jwk.kty, kid: KID, use: "sig", n: jwk.n, e: jwk.e }],
+      keys: [{ kty: jwk.kty, kid: APS_TOKEN_KID, use: "sig", n: jwk.n, e: jwk.e }],
     });
   });
 
@@ -698,9 +675,8 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       return oauthError(c, 400, "invalid_request", "The request is missing a required parameter 'token'.");
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    const access = getAccessTokens(store).get(token);
-    if (access && access.expiresAt > now) {
+    const access = token ? await findActiveAccessToken(store, token) : null;
+    if (access) {
       return c.json({
         active: true,
         scope: access.scope,
@@ -758,12 +734,9 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     return c.redirect(postLogoutRedirectUri, 302);
   });
 
-  app.get("/userinfo", (c) => {
-    const authHeader = c.req.header("Authorization") ?? "";
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const record = token ? getAccessTokens(store).get(token) : undefined;
-    const now = Math.floor(Date.now() / 1000);
-    if (!record || record.expiresAt <= now || !record.apsUserId) {
+  app.get("/userinfo", async (c) => {
+    const record = await accessTokenForRequest(c, store);
+    if (!record?.apsUserId) {
       return userProfileError(c);
     }
     const user = aps.users.findOneBy("user_id", record.apsUserId);
