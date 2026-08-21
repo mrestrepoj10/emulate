@@ -9,10 +9,14 @@ export const DEFAULT_USER_EMAIL = "testuser@autodesk.local";
 export const DEFAULT_HUB_ID = "b.emulate-hub";
 export const DEFAULT_PROJECT_ID = "b.emulate-project";
 export const DEFAULT_MANIFEST_URN = "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA";
+export const DEFAULT_SECOND_MANIFEST_URN =
+  "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc3RydWN0dXJhbC5ydnQ";
 export const DEFAULT_WEBHOOK_FOLDER_ID = "urn:adsk.wipprod:fs.folder:co.emulate-documents";
 export const DEFAULT_WEBHOOK_CHILD_FOLDER_ID = "urn:adsk.wipprod:fs.folder:co.emulate-plans";
 export const DEFAULT_WEBHOOK_ITEM_ID = "urn:adsk.wipprod:dm.lineage:emulate-sample-model";
 export const DEFAULT_WEBHOOK_VERSION_ID = "urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1";
+export const DEFAULT_SECOND_DOCUMENT_ITEM_ID = "urn:adsk.wipprod:dm.lineage:emulate-structural-model";
+export const DEFAULT_SECOND_DOCUMENT_VERSION_ID = "urn:adsk.wipprod:fs.file:vf.emulate-structural-model?version=1";
 
 export const SUPPORTED_SCOPES = [
   "user-profile:read",

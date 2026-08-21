@@ -1,6 +1,6 @@
 # @emulators/aps
 
-Autodesk Platform Services (APS) emulation with authentication v2, Data Management, Model Derivative, Autodesk Construction Cloud Issues, RFIs, and Sheets reads, plus active Webhooks delivery and local event simulation.
+Autodesk Platform Services (APS) emulation with authentication v2, Data Management, Model Derivative, Autodesk Construction Cloud Issues, RFIs, Sheets, and Model Coordination reads, plus active Webhooks delivery and local event simulation.
 
 Part of [emulate](https://github.com/vercel-labs/emulate) — local drop-in replacement services for CI and no-network sandboxes.
 
@@ -42,6 +42,12 @@ npm install @emulators/aps
 - `GET /construction/sheets/v1/projects/:projectId/version-sets` — list Sheet version sets
 - `GET /construction/sheets/v1/projects/:projectId/collections` — list Sheet collections
 - `GET /construction/sheets/v1/projects/:projectId/collections/:collectionId` — get a Sheet collection
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets` — list Model Coordination model sets
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/latest` — get the latest model set version
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/views` — list model set views
+- `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/tests` — list clash tests
+- `GET /bim360/clash/v3/containers/:containerId/tests/:testId/resources` — issue expiring gzip resource URLs
+- `GET /bim360/clash/v3/containers/:containerId/tests/:testId/clashes/:disposition` — list assigned or closed clash groups
 - `POST/GET /webhooks/v1/systems/:system/events/:event/hooks` — create or list event hooks
 - `GET/PATCH/DELETE /webhooks/v1/systems/:system/events/:event/hooks/:hookId` — manage one hook
 - `POST/GET /webhooks/v1/systems/:system/hooks` — create or list hooks for a system
@@ -51,6 +57,7 @@ npm install @emulators/aps
 - `POST /_aps/simulate/dm-version-added` — emit from a seeded Data Management version
 - `POST /_aps/simulate/extraction-finished` — emit from a seeded manifest
 - `POST /_aps/simulate/issue-created` — emit from a seeded ACC issue
+- `POST /_aps/simulate/modelset-version-added` — add a model set version and run its clash test
 
 ## URL Mapping
 
@@ -64,14 +71,16 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/construction/issues/v1/...` | `$APS_EMULATOR_URL/construction/issues/v1/...` |
 | `https://developer.api.autodesk.com/construction/rfis/v3/...`   | `$APS_EMULATOR_URL/construction/rfis/v3/...`   |
 | `https://developer.api.autodesk.com/construction/sheets/v1/...` | `$APS_EMULATOR_URL/construction/sheets/v1/...` |
+| `https://developer.api.autodesk.com/bim360/modelset/v3/...`     | `$APS_EMULATOR_URL/bim360/modelset/v3/...`     |
+| `https://developer.api.autodesk.com/bim360/clash/v3/...`        | `$APS_EMULATOR_URL/bim360/clash/v3/...`        |
 | `https://developer.api.autodesk.com/webhooks/v1/...`            | `$APS_EMULATOR_URL/webhooks/v1/...`            |
 | `https://api.userprofile.autodesk.com/userinfo`                 | `$APS_EMULATOR_URL/userinfo`                   |
 
 ## Behavior
 
-Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Protected routes validate the signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted. Hub, project, Issues, and RFI routes require a 3-legged token. Model Derivative, Sheets, and most Webhooks routes accept either token type. `GET /webhooks/v1/app/hooks` requires a 2-legged token. Sheets supports optional `x-user-id` impersonation for 2-legged tokens.
+Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Protected routes validate the signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted. Hub, project, Issues, RFI, and Model Coordination routes require a 3-legged token. Model Derivative, Sheets, and most Webhooks routes accept either token type. `GET /webhooks/v1/app/hooks` requires a 2-legged token. Sheets supports optional `x-user-id` impersonation for 2-legged tokens.
 
-With no config, the emulator also seeds one hub, two projects, one ACC project membership, sample Issues, RFIs, Sheets, and a completed sample manifest.
+With no config, the emulator also seeds one hub, two projects, one ACC project membership, sample Issues, RFIs, Sheets, two coordinated Docs models with manifests, and one successful clash test.
 
 ## Seed Configuration
 
@@ -166,13 +175,23 @@ aps:
     reactivate_after_ms: 1000
     max_reactivation_cycles: 5
     delivery_timeout_ms: 6000
-  webhook_dm_versions:
+  document_versions:
     - version_id: urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
       item_id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
       folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
       ancestor_folder_ids: [urn:adsk.wipprod:fs.folder:co.emulate-documents]
       project_id: b.emulate-project
       display_name: sample.rvt
+  model_coordination_timing:
+    processing_ms: 25
+    signed_url_ttl_ms: 60000
+  model_sets:
+    - id: 13131313-1313-4131-8131-131313131313
+      project_id: b.emulate-project
+      name: Sample Building Coordination
+      document_version_ids:
+        - urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+        - urn:adsk.wipprod:fs.file:vf.emulate-structural-model?version=1
   webhooks:
     - system: data
       event: dm.version.added
@@ -185,7 +204,28 @@ aps:
 
 Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise.
 Every project `hub_id` must match a seeded hub.
-ACC resources use the Data Management project ID in seed config. Remove `b.` when calling Issues or RFIs. Sheets accepts either form.
+ACC resources use the Data Management project ID in seed config. Remove `b.` when calling Issues, RFIs, or Model Coordination. Sheets accepts either form.
+
+## Model Coordination
+
+Use a 3-legged `data:read` token to fetch the latest model set version, find its clash test, and download a gzip result:
+
+```bash
+PROJECT_ID="emulate-project"
+MODEL_SET_ID="13131313-1313-4131-8131-131313131313"
+ACCESS_TOKEN="<3-legged-access-token>"
+
+curl "$APS_EMULATOR_URL/bim360/modelset/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/versions/latest" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+
+TEST_ID=$(curl -s "$APS_EMULATOR_URL/bim360/clash/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/tests?status=Success" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r '.tests[0].id')
+RESOURCE_URL=$(curl -s "$APS_EMULATOR_URL/bim360/clash/v3/containers/$PROJECT_ID/tests/$TEST_ID/resources" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r '.resources[2].url')
+curl -s "$RESOURCE_URL" | gunzip -c
+```
+
+Resources are three deterministic JSON gzip artifacts with expiring signed URLs. Re-request resources for fresh URLs. `POST /_aps/simulate/modelset-version-added` adds a version and advances its one clash test from `Pending` through `Processing` to `Success`.
 
 ## Webhook Simulation
 

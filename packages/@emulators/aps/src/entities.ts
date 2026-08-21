@@ -175,7 +175,7 @@ export interface ApsWebhookDelivery extends Entity {
   signature_present: boolean;
 }
 
-export interface ApsWebhookDmVersion extends Entity {
+export interface ApsDocumentVersion extends Entity {
   version_id: string;
   item_id: string;
   folder_id: string;
@@ -184,4 +184,101 @@ export interface ApsWebhookDmVersion extends Entity {
   display_name: string;
   storage_urn: string;
   region: string;
+  bubble_urn: string;
+  viewable_id: string;
+  viewable_guid: string;
+}
+
+export type ApsModelSetVersionStatus = "Pending" | "Processing" | "Successful" | "Partial" | "Failed";
+export type ApsClashTestStatus = "Pending" | "Processing" | "Success" | "Failed";
+
+export interface ApsModelSetDocumentVersion {
+  stableDocumentId: string;
+  unstableDocumentId: string;
+  documentLineage: {
+    lineageUrn: string;
+    parentFolderUrn: string;
+    isAligned: boolean;
+    tipVersionUrn: string;
+  };
+  alignment: {
+    transform: number[];
+    checksum: string;
+    upAxis: number[];
+    distanceUnit: string;
+  };
+  isTipVersion: boolean;
+  documentStatus: "Succeeded" | "Failed" | "Running" | "Skipped";
+  forgeType: "versions:autodesk.bim360:Document" | "versions:autodesk.bim360:File";
+  versionUrn: string;
+  displayName: string;
+  revision: string;
+  viewableName: string;
+  createUserId: string;
+  createTime: string;
+  viewableGuid: string;
+  viewableId: string;
+  viewableMime: string;
+  bubbleUrn: string;
+  isSvf2Supported: boolean;
+  originalSeedFileVersionSize: number;
+  originalSeedFileVersionUrn: string;
+  originalSeedFileVersionName: string;
+}
+
+export interface ApsModelSet extends Entity {
+  project_id: string;
+  model_set_id: string;
+  name: string;
+  description: string;
+  root_folder_urn: string;
+  folder_urns: string[];
+  created_by: string;
+  created_time: string;
+  modified_by: string;
+  modified_time: string;
+  disabled: boolean;
+  deleted: boolean;
+}
+
+export interface ApsModelSetVersion extends Entity {
+  model_set_id: string;
+  version: number;
+  create_time: string;
+  status: ApsModelSetVersionStatus;
+  document_versions: ApsModelSetDocumentVersion[];
+}
+
+export interface ApsModelSetView extends Entity {
+  model_set_id: string;
+  version: number;
+  view_id: string;
+  document_versions: string[];
+}
+
+export interface ApsClashTest extends Entity {
+  project_id: string;
+  test_id: string;
+  model_set_id: string;
+  model_set_version: number;
+  status: ApsClashTestStatus;
+  completed_on: string | null;
+}
+
+export interface ApsClashGroup extends Entity {
+  test_id: string;
+  disposition: "assigned" | "closed";
+  group_id: string;
+  original_clash_test_id: string;
+  created_at_version: number;
+  existing: number[];
+  resolved: number[];
+}
+
+export interface ApsSignedBlob extends Entity {
+  blob_id: string;
+  owner_id: string;
+  filename: string;
+  content_type: string;
+  content_base64: string;
 }

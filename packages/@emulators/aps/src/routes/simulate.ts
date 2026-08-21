@@ -1,6 +1,18 @@
 import type { AppEnv, Context, RouteContext } from "@emulators/core";
 import { bareProjectId } from "../acc.js";
-import { DEFAULT_MANIFEST_URN, DEFAULT_PROJECT_ID, isRecordObject, jsonObjectBody, optionalString } from "../helpers.js";
+import {
+  DEFAULT_MANIFEST_URN,
+  DEFAULT_PROJECT_ID,
+  isRecordObject,
+  jsonObjectBody,
+  optionalString,
+} from "../helpers.js";
+import {
+  addModelSetVersion,
+  clashTestPayload,
+  modelSetVersionPayload,
+  setModelCoordinationTiming,
+} from "../model-coordination.js";
 import { getApsStore } from "../store.js";
 import { parseWebhookRegion } from "../webhook-events.js";
 import { simulateWebhookEvent } from "../webhooks.js";
@@ -18,6 +30,27 @@ function stringRecord(value: unknown): Record<string, string> | undefined {
 
 export function simulateRoutes({ app, store }: RouteContext): void {
   const aps = getApsStore(store);
+
+  app.post("/_aps/simulate/modelset-version-added", async (c) => {
+    const body = await jsonObjectBody(c);
+    if (!body) return simulatorError(c, "The request body must be a JSON object.");
+    const requestedModelSetId = optionalString(body.modelSetId);
+    const modelSet = requestedModelSetId
+      ? aps.modelSets.findOneBy("model_set_id", requestedModelSetId)
+      : aps.modelSets.all()[0];
+    if (!modelSet) return simulatorError(c, "The seeded model set was not found.", 404);
+    if (body.processingMs !== undefined) {
+      if (typeof body.processingMs !== "number" || !Number.isFinite(body.processingMs) || body.processingMs < 0) {
+        return simulatorError(c, "processingMs must be a non-negative number.");
+      }
+      setModelCoordinationTiming(store, { processing_ms: body.processingMs });
+    }
+    const result = addModelSetVersion(aps, store, modelSet);
+    return c.json({
+      modelSetVersion: modelSetVersionPayload(result.version),
+      clashTest: clashTestPayload(result.test),
+    });
+  });
 
   app.post("/_aps/simulate/event", async (c) => {
     const body = await jsonObjectBody(c);
@@ -58,8 +91,8 @@ export function simulateRoutes({ app, store }: RouteContext): void {
     if (!body) return simulatorError(c, "The request body must be a JSON object.");
     const requestedVersionId = optionalString(body.versionId);
     const version = requestedVersionId
-      ? aps.webhookDmVersions.findOneBy("version_id", requestedVersionId)
-      : aps.webhookDmVersions.all()[0];
+      ? aps.documentVersions.findOneBy("version_id", requestedVersionId)
+      : aps.documentVersions.all()[0];
     if (!version) return simulatorError(c, "The seeded Data Management version was not found.", 404);
     const now = new Date().toISOString();
     const projectId = bareProjectId(version.project_id);

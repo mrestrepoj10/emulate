@@ -977,7 +977,7 @@ Current Twilio limits: no carrier delivery, A2P 10DLC, toll-free verification, r
 
 ## Autodesk Platform Services (APS)
 
-Autodesk Platform Services (formerly Forge) emulation with authentication v2, Data Management, Model Derivative, core Autodesk Construction Cloud workflow reads, and active Webhooks delivery. Every protected route verifies the emulator's RS256 access tokens, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by APS routes.
+Autodesk Platform Services (formerly Forge) emulation with authentication v2, Data Management, Model Derivative, core Autodesk Construction Cloud workflow reads including Model Coordination, and active Webhooks delivery. Every protected route verifies the emulator's RS256 access tokens, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by APS routes.
 
 - `GET /.well-known/openid-configuration` - OIDC discovery document
 - `GET /authentication/v2/keys` - JSON Web Key Set (JWKS)
@@ -1009,6 +1009,12 @@ Autodesk Platform Services (formerly Forge) emulation with authentication v2, Da
 - `GET /construction/sheets/v1/projects/:projectId/version-sets` - list Sheet version sets
 - `GET /construction/sheets/v1/projects/:projectId/collections` - list Sheet collections
 - `GET /construction/sheets/v1/projects/:projectId/collections/:collectionId` - get a Sheet collection
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets` - list Model Coordination model sets
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/latest` - get the latest model set version and Docs references
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/views` - list seeded model set views
+- `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/tests` - list clash tests
+- `GET /bim360/clash/v3/containers/:containerId/tests/:testId/resources` - issue expiring URLs for gzip clash results
+- `GET /bim360/clash/v3/containers/:containerId/tests/:testId/clashes/:disposition` - list assigned or closed clash-group intersections
 - `POST/GET /webhooks/v1/systems/:system/events/:event/hooks` - create or list event hooks
 - `GET/PATCH/DELETE /webhooks/v1/systems/:system/events/:event/hooks/:hookId` - manage one hook
 - `POST/GET /webhooks/v1/systems/:system/hooks` - create or list hooks for a system
@@ -1019,6 +1025,7 @@ Autodesk Platform Services (formerly Forge) emulation with authentication v2, Da
 - `POST /_aps/simulate/dm-version-added` - emit from a seeded Data Management version
 - `POST /_aps/simulate/extraction-finished` - emit from a seeded manifest
 - `POST /_aps/simulate/issue-created` - emit from a seeded ACC issue
+- `POST /_aps/simulate/modelset-version-added` - add a model set version and run its clash test
 
 Real APS paths map 1:1 onto the emulator:
 
@@ -1030,10 +1037,12 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/construction/issues/v1/...` | `$APS_EMULATOR_URL/construction/issues/v1/...` |
 | `https://developer.api.autodesk.com/construction/rfis/v3/...`   | `$APS_EMULATOR_URL/construction/rfis/v3/...`   |
 | `https://developer.api.autodesk.com/construction/sheets/v1/...` | `$APS_EMULATOR_URL/construction/sheets/v1/...` |
+| `https://developer.api.autodesk.com/bim360/modelset/v3/...`     | `$APS_EMULATOR_URL/bim360/modelset/v3/...`     |
+| `https://developer.api.autodesk.com/bim360/clash/v3/...`        | `$APS_EMULATOR_URL/bim360/clash/v3/...`        |
 | `https://developer.api.autodesk.com/webhooks/v1/...`            | `$APS_EMULATOR_URL/webhooks/v1/...`            |
 | `https://api.userprofile.autodesk.com/userinfo`                 | `$APS_EMULATOR_URL/userinfo`                   |
 
-With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, a user `testuser@autodesk.local`, one hub, two projects, one ACC project membership, sample Issues, RFIs, Sheets, and a completed manifest at `dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA`. Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Authorization codes are single use and expire after 5 minutes. Refresh tokens live for 15 days and are single use: every refresh returns a new refresh token, and replaying an already-used refresh token invalidates the whole grant family, matching real APS behavior. PKCE supports `S256` only and is required for public clients.
+With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, a user `testuser@autodesk.local`, one hub, two projects, one ACC project membership, sample Issues, RFIs, Sheets, two coordinated Docs models with completed manifests, and one successful model set version and clash test. Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Authorization codes are single use and expire after 5 minutes. Refresh tokens live for 15 days and are single use: every refresh returns a new refresh token, and replaying an already-used refresh token invalidates the whole grant family, matching real APS behavior. PKCE supports `S256` only and is required for public clients.
 
 ```yaml
 aps:
@@ -1126,13 +1135,23 @@ aps:
     reactivate_after_ms: 1000
     max_reactivation_cycles: 5
     delivery_timeout_ms: 6000
-  webhook_dm_versions:
+  document_versions:
     - version_id: urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
       item_id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
       folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
       ancestor_folder_ids: [urn:adsk.wipprod:fs.folder:co.emulate-documents]
       project_id: b.emulate-project
       display_name: sample.rvt
+  model_coordination_timing:
+    processing_ms: 25
+    signed_url_ttl_ms: 60000
+  model_sets:
+    - id: 13131313-1313-4131-8131-131313131313
+      project_id: b.emulate-project
+      name: Sample Building Coordination
+      document_version_ids:
+        - urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+        - urn:adsk.wipprod:fs.file:vf.emulate-structural-model?version=1
   webhooks:
     - system: data
       event: dm.version.added
@@ -1145,7 +1164,31 @@ aps:
 
 Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise.
 Every project `hub_id` must match a seeded hub.
-ACC resources use the Data Management project ID in seed config. Issues and RFIs use that ID without `b.` in request paths. Sheets accepts either form. Issues and RFIs require a 3-legged user-context token. Sheets accepts 2-legged tokens and supports optional `x-user-id` impersonation.
+ACC resources use the Data Management project ID in seed config. Issues, RFIs, and Model Coordination use that ID without `b.` in request paths. Sheets accepts either form. Issues, RFIs, and Model Coordination require a 3-legged user-context token. Sheets accepts 2-legged tokens and supports optional `x-user-id` impersonation.
+
+### APS Model Coordination
+
+Use a 3-legged token with `data:read`. Model-set documents reference the same seeded Data Management versions and Model Derivative manifests used elsewhere in APS.
+
+```bash
+APS_URL="http://localhost:4014"
+PROJECT_ID="emulate-project"
+MODEL_SET_ID="13131313-1313-4131-8131-131313131313"
+TEST_ID="16161616-1616-4161-8161-161616161616"
+
+curl "$APS_URL/bim360/modelset/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/versions/latest" \
+  -H "Authorization: Bearer <3-legged-access-token>"
+
+RESOURCE_URL=$(curl -s "$APS_URL/bim360/clash/v3/containers/$PROJECT_ID/tests/$TEST_ID/resources" \
+  -H "Authorization: Bearer <3-legged-access-token>" | jq -r '.resources[2].url')
+curl -s "$RESOURCE_URL" | gunzip -c
+
+curl -X POST "$APS_URL/_aps/simulate/modelset-version-added" \
+  -H "Content-Type: application/json" \
+  -d '{"modelSetId":"13131313-1313-4131-8131-131313131313"}'
+```
+
+Model-set and clash lists use opaque continuation tokens with a 20-item page cap. Clash resource URLs expire; request the resources endpoint again for fresh URLs. The three downloads are deterministic `scope-version-clash.2.0.0`, `scope-version-clash-instance.2.0.0`, and `scope-version-document.2.0.0` JSON gzip artifacts.
 
 ### APS Webhooks
 
@@ -1173,7 +1216,7 @@ Every callback includes an `x-adsk-delivery-id`. Signed callbacks also include `
 
 Retries, deactivation after five failed events, and up to five auto-reactivation trials are implemented on a compressed configurable clock. The default retry count remains eight, while millisecond timing fields let the complete lifecycle run during local and CI tests. Folder hooks match seeded descendants recursively. Filters support `$[?()]` comparisons, `in [...]`, `&&`, `||`, and an array of filters combined with AND.
 
-Current APS limits: Data Management folder, item, version, and OSS HTTP routes; write operations; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, Model Coordination, and Model Properties; ACC write endpoints; callback URL verification; rate limits; and the real token propagation delay are not included yet.
+Current APS limits: Data Management folder, item, version, and OSS HTTP routes; write operations; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; callback URL verification; rate limits; and the real token propagation delay are not included yet.
 
 ## Apple Sign In
 

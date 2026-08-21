@@ -3,6 +3,9 @@ import {
   DEFAULT_HUB_ID,
   DEFAULT_MANIFEST_URN,
   DEFAULT_PROJECT_ID,
+  DEFAULT_SECOND_DOCUMENT_ITEM_ID,
+  DEFAULT_SECOND_DOCUMENT_VERSION_ID,
+  DEFAULT_SECOND_MANIFEST_URN,
   DEFAULT_WEBHOOK_CHILD_FOLDER_ID,
   DEFAULT_WEBHOOK_FOLDER_ID,
   DEFAULT_WEBHOOK_ITEM_ID,
@@ -12,6 +15,20 @@ import {
 export interface ApsAccActorSeed {
   id: string;
   type?: "user" | "role" | "company";
+}
+
+export interface ApsDocumentVersionSeed {
+  version_id: string;
+  item_id: string;
+  folder_id: string;
+  ancestor_folder_ids?: string[];
+  project_id: string;
+  display_name?: string;
+  storage_urn?: string;
+  region?: string;
+  bubble_urn?: string;
+  viewable_id?: string;
+  viewable_guid?: string;
 }
 
 export interface ApsSeedConfig {
@@ -189,15 +206,23 @@ export interface ApsSeedConfig {
     }
   >;
   webhook_timing?: Partial<ApsWebhookTimingConfig>;
-  webhook_dm_versions?: Array<{
-    version_id: string;
-    item_id: string;
-    folder_id: string;
-    ancestor_folder_ids?: string[];
+  model_coordination_timing?: Partial<ApsModelCoordinationTimingConfig>;
+  document_versions?: ApsDocumentVersionSeed[];
+  /** @deprecated Use document_versions. */
+  webhook_dm_versions?: ApsDocumentVersionSeed[];
+  model_sets?: Array<{
+    id: string;
     project_id: string;
-    display_name?: string;
-    storage_urn?: string;
-    region?: string;
+    name: string;
+    description?: string;
+    root_folder_urn?: string;
+    folder_urns?: string[];
+    document_version_ids?: string[];
+    created_by?: string;
+    created_time?: string;
+    disabled?: boolean;
+    deleted?: boolean;
+    test_id?: string;
   }>;
   webhooks?: Array<{
     system: string;
@@ -229,6 +254,16 @@ export interface ApsWebhookTimingConfig {
   delivery_timeout_ms: number;
 }
 
+export interface ApsModelCoordinationTimingConfig {
+  processing_ms: number;
+  signed_url_ttl_ms: number;
+}
+
+export const DEFAULT_MODEL_COORDINATION_TIMING: ApsModelCoordinationTimingConfig = {
+  processing_ms: 25,
+  signed_url_ttl_ms: 60_000,
+};
+
 export const DEFAULT_WEBHOOK_TIMING: ApsWebhookTimingConfig = {
   max_retries: 8,
   retry_base_ms: 25,
@@ -240,6 +275,7 @@ export const DEFAULT_WEBHOOK_TIMING: ApsWebhookTimingConfig = {
 };
 
 const DEFAULT_DERIVATIVE_BASE = `urn:adsk.viewing:fs.file:${DEFAULT_MANIFEST_URN}/output`;
+const DEFAULT_SECOND_DERIVATIVE_BASE = `urn:adsk.viewing:fs.file:${DEFAULT_SECOND_MANIFEST_URN}/output`;
 const DEFAULT_ACC_TIMESTAMP = "2026-08-19T12:00:00.000Z";
 const DEFAULT_ISSUE_TYPE_ID = "11111111-1111-4111-8111-111111111111";
 const DEFAULT_ISSUE_SUBTYPE_ID = "22222222-2222-4222-8222-222222222222";
@@ -460,7 +496,7 @@ export const DEFAULT_DATA_SEED = {
       updated_at: DEFAULT_ACC_TIMESTAMP,
     },
   ],
-  webhook_dm_versions: [
+  document_versions: [
     {
       version_id: DEFAULT_WEBHOOK_VERSION_ID,
       item_id: DEFAULT_WEBHOOK_ITEM_ID,
@@ -470,6 +506,19 @@ export const DEFAULT_DATA_SEED = {
       display_name: "sample.rvt",
       storage_urn: "urn:adsk.objects:os.object:emulate-bucket/sample.rvt",
       region: "US",
+    },
+    {
+      version_id: DEFAULT_SECOND_DOCUMENT_VERSION_ID,
+      item_id: DEFAULT_SECOND_DOCUMENT_ITEM_ID,
+      folder_id: DEFAULT_WEBHOOK_CHILD_FOLDER_ID,
+      ancestor_folder_ids: [DEFAULT_WEBHOOK_FOLDER_ID],
+      project_id: DEFAULT_PROJECT_ID,
+      display_name: "structural.rvt",
+      storage_urn: "urn:adsk.objects:os.object:emulate-bucket/structural.rvt",
+      region: "US",
+      bubble_urn: DEFAULT_SECOND_MANIFEST_URN,
+      viewable_id: "emulate-structural-3d-view",
+      viewable_guid: "14141414-1414-4141-8141-141414141414",
     },
   ],
   manifests: {
@@ -536,5 +585,66 @@ export const DEFAULT_DATA_SEED = {
         },
       ],
     },
+    [DEFAULT_SECOND_MANIFEST_URN]: {
+      type: "manifest",
+      hasThumbnail: "true",
+      status: "success",
+      progress: "complete",
+      region: "US",
+      version: "1.0",
+      derivatives: [
+        {
+          name: "structural.rvt",
+          hasThumbnail: "true",
+          status: "success",
+          progress: "complete",
+          outputType: "svf2",
+          children: [
+            {
+              guid: "15151515-1515-4151-8151-151515151515",
+              type: "resource",
+              role: "Autodesk.CloudPlatform.PropertyDatabase",
+              urn: `${DEFAULT_SECOND_DERIVATIVE_BASE}/Resource/model.sdb`,
+              mime: "application/autodesk-db",
+              status: "success",
+            },
+            {
+              guid: "14141414-1414-4141-8141-141414141414",
+              type: "geometry",
+              role: "3d",
+              name: "{3D}",
+              viewableID: "emulate-structural-3d-view",
+              status: "success",
+              hasThumbnail: "true",
+              progress: "complete",
+              children: [
+                {
+                  guid: "emulate-structural-3d-view",
+                  type: "view",
+                  role: "3d",
+                  name: "{3D}",
+                  status: "success",
+                  progress: "complete",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
   },
+  model_sets: [
+    {
+      id: "13131313-1313-4131-8131-131313131313",
+      project_id: DEFAULT_PROJECT_ID,
+      name: "Sample Building Coordination",
+      description: "Architectural and structural coordination model set",
+      root_folder_urn: DEFAULT_WEBHOOK_FOLDER_ID,
+      folder_urns: [DEFAULT_WEBHOOK_CHILD_FOLDER_ID],
+      document_version_ids: [DEFAULT_WEBHOOK_VERSION_ID, DEFAULT_SECOND_DOCUMENT_VERSION_ID],
+      created_by: "testuser@autodesk.local",
+      created_time: DEFAULT_ACC_TIMESTAMP,
+      test_id: "16161616-1616-4161-8161-161616161616",
+    },
+  ],
 } satisfies ApsSeedConfig;

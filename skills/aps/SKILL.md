@@ -1,12 +1,12 @@
 ---
 name: aps
-description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management, Model Derivative, Autodesk Construction Cloud workflow reads, and active Webhooks for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs and projects, seeded manifests, Issues, RFIs, Sheets, webhook subscriptions, signed callback delivery, retry lifecycle testing, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Model Derivative manifest", "ACC Issues", "ACC RFIs", "ACC Sheets", "APS webhooks", "dm.version.added", "extraction.finished", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
+description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management, Model Derivative, Autodesk Construction Cloud workflow reads including Model Coordination, and active Webhooks for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs and projects, seeded manifests, Issues, RFIs, Sheets, model sets, clash tests, expiring clash resources, webhook subscriptions, signed callback delivery, retry lifecycle testing, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Model Derivative manifest", "ACC Issues", "ACC RFIs", "ACC Sheets", "Model Coordination", "clash test", "APS webhooks", "dm.version.added", "extraction.finished", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
 allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 ---
 
 # Autodesk Platform Services (APS) Emulator
 
-APS authentication v2 emulation plus Data Management, Model Derivative, ACC Issues, RFIs, and Sheets reads, with active Webhooks delivery and local event simulators. Protected routes validate the emulator's own RS256 token signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by these routes.
+APS authentication v2 emulation plus Data Management, Model Derivative, ACC Issues, RFIs, Sheets, and Model Coordination reads, with active Webhooks delivery and local event simulators. Protected routes validate the emulator's own RS256 token signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by these routes.
 
 ## Start
 
@@ -54,6 +54,8 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/construction/issues/v1/...`                  | `$APS_EMULATOR_URL/construction/issues/v1/...`                  |
 | `https://developer.api.autodesk.com/construction/rfis/v3/...`                    | `$APS_EMULATOR_URL/construction/rfis/v3/...`                    |
 | `https://developer.api.autodesk.com/construction/sheets/v1/...`                  | `$APS_EMULATOR_URL/construction/sheets/v1/...`                  |
+| `https://developer.api.autodesk.com/bim360/modelset/v3/...`                     | `$APS_EMULATOR_URL/bim360/modelset/v3/...`                     |
+| `https://developer.api.autodesk.com/bim360/clash/v3/...`                        | `$APS_EMULATOR_URL/bim360/clash/v3/...`                        |
 | `https://developer.api.autodesk.com/webhooks/v1/...`                             | `$APS_EMULATOR_URL/webhooks/v1/...`                             |
 | `https://developer.api.autodesk.com/.well-known/openid-configuration`            | `$APS_EMULATOR_URL/.well-known/openid-configuration`            |
 | `https://api.userprofile.autodesk.com/userinfo`                                  | `$APS_EMULATOR_URL/userinfo`                                    |
@@ -151,13 +153,23 @@ aps:
     reactivate_after_ms: 1000
     max_reactivation_cycles: 5
     delivery_timeout_ms: 6000
-  webhook_dm_versions:
+  document_versions:
     - version_id: urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
       item_id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
       folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
       ancestor_folder_ids: [urn:adsk.wipprod:fs.folder:co.emulate-documents]
       project_id: b.emulate-project
       display_name: sample.rvt
+  model_coordination_timing:
+    processing_ms: 25
+    signed_url_ttl_ms: 60000
+  model_sets:
+    - id: 13131313-1313-4131-8131-131313131313
+      project_id: b.emulate-project
+      name: Sample Building Coordination
+      document_version_ids:
+        - urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+        - urn:adsk.wipprod:fs.file:vf.emulate-structural-model?version=1
   webhooks:
     - system: data
       event: dm.version.added
@@ -168,7 +180,7 @@ aps:
       auto_reactivate_hook: true
 ```
 
-Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise. Every project `hub_id` must match a seeded hub. ACC resources use the Data Management project ID in seed config. With no config, the emulator also seeds one hub, two projects, one ACC project membership, sample workflow resources, and a completed sample manifest.
+Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise. Every project `hub_id` must match a seeded hub. ACC resources use the Data Management project ID in seed config. With no config, the emulator also seeds one hub, two projects, one ACC project membership, sample workflow resources, two coordinated Docs models with manifests, and one successful clash test.
 
 ## 3-Legged Authorization Code Flow
 
@@ -293,6 +305,42 @@ curl "$APS_URL/construction/sheets/v1/projects/emulate-project/version-sets" \
 
 Sheets provides sheet lists and batch reads, version-set lists, collection lists, and collection details. Its paginated lists include `previousUrl` and `nextUrl`.
 
+## Model Coordination Walkthrough
+
+Model Coordination requires a 3-legged `data:read` token and the bare project GUID. The default model set references two seeded Data Management versions and two Model Derivative manifests. Walk the same sequence as a real coordination client:
+
+```bash
+APS_URL="http://localhost:4014"
+ACCESS_TOKEN="<3-legged-access-token>"
+PROJECT_ID="emulate-project"
+MODEL_SET_ID="13131313-1313-4131-8131-131313131313"
+
+# List model sets and inspect the latest document versions
+curl "$APS_URL/bim360/modelset/v3/containers/$PROJECT_ID/modelsets" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+curl "$APS_URL/bim360/modelset/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/versions/latest" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+
+# Select the successful clash test
+TEST_ID=$(curl -s "$APS_URL/bim360/clash/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/tests?status=Success" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r '.tests[0].id')
+
+# Request signed resources, then download and decompress the document map
+RESOURCE_URL=$(curl -s "$APS_URL/bim360/clash/v3/containers/$PROJECT_ID/tests/$TEST_ID/resources" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r '.resources[] | select(.type == "scope-version-document.2.0.0") | .url')
+curl -s "$RESOURCE_URL" | gunzip -c
+```
+
+The document-map URNs match `documentVersions[].versionUrn` from the latest model set version. Signed URLs are deliberately short-lived; request resources again after expiry. Lists use opaque `continuationToken` values and accept at most 20 items per page.
+
+To exercise the asynchronous lifecycle, append a version and poll its returned clash-test id until it reaches `Success`:
+
+```bash
+curl -X POST "$APS_URL/_aps/simulate/modelset-version-added" \
+  -H "Content-Type: application/json" \
+  -d '{"modelSetId":"13131313-1313-4131-8131-131313131313"}'
+```
+
 ## Webhooks
 
 Use a 2-legged or 3-legged token with `data:read data:write` for hook writes and signing-secret management. Reads need `data:read`. Hooks created with a 2-legged token belong to the app; hooks created with a 3-legged token belong to that user. Region is part of the partition and follows `region` header, `x-ads-region` header, then query parameter precedence.
@@ -407,4 +455,4 @@ const { payload } = await jwtVerify(accessToken, jwks, {
 
 ## Current Limits
 
-Data Management folder, item, version, and OSS HTTP routes; write operations; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, Model Coordination, and Model Properties; ACC write endpoints; webhook callback verification; rate limits; and the real token propagation delay are not included yet.
+Data Management folder, item, version, and OSS HTTP routes; write operations; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; webhook callback verification; rate limits; and the real token propagation delay are not included yet.

@@ -1,11 +1,16 @@
 import { Store, type Collection } from "@emulators/core";
 import type {
   ApsAccProjectUser,
+  ApsClashGroup,
+  ApsClashTest,
   ApsClient,
   ApsHub,
   ApsIssue,
   ApsIssueType,
   ApsManifest,
+  ApsModelSet,
+  ApsModelSetVersion,
+  ApsModelSetView,
   ApsProject,
   ApsRfi,
   ApsRfiAttribute,
@@ -13,9 +18,10 @@ import type {
   ApsSheet,
   ApsSheetCollection,
   ApsSheetVersionSet,
+  ApsSignedBlob,
   ApsUser,
   ApsWebhookDelivery,
-  ApsWebhookDmVersion,
+  ApsDocumentVersion,
   ApsWebhookHook,
   ApsWebhookSecret,
 } from "./entities.js";
@@ -38,7 +44,13 @@ export interface ApsStore {
   webhookHooks: Collection<ApsWebhookHook>;
   webhookSecrets: Collection<ApsWebhookSecret>;
   webhookDeliveries: Collection<ApsWebhookDelivery>;
-  webhookDmVersions: Collection<ApsWebhookDmVersion>;
+  documentVersions: Collection<ApsDocumentVersion>;
+  modelSets: Collection<ApsModelSet>;
+  modelSetVersions: Collection<ApsModelSetVersion>;
+  modelSetViews: Collection<ApsModelSetView>;
+  clashTests: Collection<ApsClashTest>;
+  clashGroups: Collection<ApsClashGroup>;
+  signedBlobs: Collection<ApsSignedBlob>;
 }
 
 export function getApsStore(store: Store): ApsStore {
@@ -60,6 +72,12 @@ export function getApsStore(store: Store): ApsStore {
     webhookHooks: store.collection<ApsWebhookHook>("aps.webhookHooks", ["hook_id"]),
     webhookSecrets: store.collection<ApsWebhookSecret>("aps.webhookSecrets", ["identity_key"]),
     webhookDeliveries: store.collection<ApsWebhookDelivery>("aps.webhookDeliveries"),
-    webhookDmVersions: store.collection<ApsWebhookDmVersion>("aps.webhookDmVersions", ["version_id"]),
+    documentVersions: store.collection<ApsDocumentVersion>("aps.documentVersions", ["version_id", "item_id"]),
+    modelSets: store.collection<ApsModelSet>("aps.modelSets", ["project_id", "model_set_id"]),
+    modelSetVersions: store.collection<ApsModelSetVersion>("aps.modelSetVersions", ["model_set_id", "version"]),
+    modelSetViews: store.collection<ApsModelSetView>("aps.modelSetViews", ["model_set_id", "version"]),
+    clashTests: store.collection<ApsClashTest>("aps.clashTests", ["project_id", "test_id", "model_set_id"]),
+    clashGroups: store.collection<ApsClashGroup>("aps.clashGroups", ["test_id", "disposition"]),
+    signedBlobs: store.collection<ApsSignedBlob>("aps.signedBlobs", ["blob_id", "owner_id"]),
   };
 }

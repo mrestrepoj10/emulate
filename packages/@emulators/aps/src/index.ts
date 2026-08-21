@@ -2,10 +2,16 @@ import type { Hono } from "@emulators/core";
 import type { AppEnv, RouteContext, ServicePlugin, Store, TokenMap, WebhookDispatcher } from "@emulators/core";
 import { DEFAULT_DATA_SEED, type ApsSeedConfig } from "./config.js";
 import {
+  getModelCoordinationTiming,
+  seedModelCoordinationFromConfig,
+  setModelCoordinationTiming,
+} from "./model-coordination.js";
+import {
   createDefaultConfidentialClient,
   createDefaultPublicClient,
   createDefaultUser,
   DEFAULT_CONFIDENTIAL_CLIENT_ID,
+  DEFAULT_MANIFEST_URN,
   DEFAULT_PUBLIC_CLIENT_ID,
   DEFAULT_USER_EMAIL,
   generateUserId,
@@ -13,14 +19,17 @@ import {
   splitName,
 } from "./helpers.js";
 import { dataManagementRoutes } from "./routes/data-management.js";
+import { clashRoutes } from "./routes/clash.js";
 import { issueRoutes } from "./routes/issues.js";
 import { modelDerivativeRoutes } from "./routes/model-derivative.js";
+import { modelSetRoutes } from "./routes/modelset.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { rfiRoutes } from "./routes/rfis.js";
 import { sheetRoutes } from "./routes/sheets.js";
 import { simulateRoutes } from "./routes/simulate.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { seedAccFromConfig } from "./seed-acc.js";
+import { signedBlobRoutes } from "./signed-blobs.js";
 import { getApsStore } from "./store.js";
 import {
   appIdentity,
@@ -34,11 +43,15 @@ import {
 export { getApsStore, type ApsStore } from "./store.js";
 export {
   DEFAULT_DATA_SEED,
+  DEFAULT_MODEL_COORDINATION_TIMING,
   DEFAULT_WEBHOOK_TIMING,
+  type ApsDocumentVersionSeed,
+  type ApsModelCoordinationTimingConfig,
   type ApsSeedConfig,
   type ApsWebhookTimingConfig,
 } from "./config.js";
 export * from "./entities.js";
+export { getModelCoordinationTiming, setModelCoordinationTiming };
 export { getWebhookTiming, setWebhookTiming, simulateWebhookEvent, webhookDetails } from "./webhooks.js";
 
 function seedDefaults(store: Store, baseUrl: string): void {
@@ -136,14 +149,14 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedCo
 
   if (config.webhook_timing) setWebhookTiming(store, config.webhook_timing);
 
-  for (const version of config.webhook_dm_versions ?? []) {
-    if (aps.webhookDmVersions.findOneBy("version_id", version.version_id)) continue;
+  for (const version of [...(config.document_versions ?? []), ...(config.webhook_dm_versions ?? [])]) {
+    if (aps.documentVersions.findOneBy("version_id", version.version_id)) continue;
     if (!aps.projects.findOneBy("project_id", version.project_id)) {
       throw new Error(
-        `APS webhook version '${version.version_id}' references unknown project '${version.project_id}'.`,
+        `APS document version '${version.version_id}' references unknown project '${version.project_id}'.`,
       );
     }
-    aps.webhookDmVersions.insert({
+    aps.documentVersions.insert({
       version_id: version.version_id,
       item_id: version.item_id,
       folder_id: version.folder_id,
@@ -152,8 +165,13 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedCo
       display_name: version.display_name ?? "model.rvt",
       storage_urn: version.storage_urn ?? `urn:adsk.objects:os.object:emulate-bucket/${version.version_id}`,
       region: (version.region ?? "US").toUpperCase(),
+      bubble_urn: version.bubble_urn ?? DEFAULT_MANIFEST_URN,
+      viewable_id: version.viewable_id ?? "emulate-3d-view",
+      viewable_guid: version.viewable_guid ?? "d8e734a8-6e9e-4f4d-9a4f-000000000001",
     });
   }
+
+  seedModelCoordinationFromConfig(aps, store, config);
 
   for (const hook of config.webhooks ?? []) {
     const user = hook.creator_user_email ? aps.users.findOneBy("email", hook.creator_user_email) : undefined;
@@ -193,10 +211,13 @@ export const apsPlugin: ServicePlugin = {
     oauthRoutes(ctx);
     dataManagementRoutes(ctx);
     modelDerivativeRoutes(ctx);
+    modelSetRoutes(ctx);
+    clashRoutes(ctx);
     issueRoutes(ctx);
     rfiRoutes(ctx);
     sheetRoutes(ctx);
     webhookRoutes(ctx);
+    signedBlobRoutes(ctx);
     simulateRoutes(ctx);
   },
   seed(store: Store, baseUrl: string): void {
