@@ -232,6 +232,7 @@ aps:
         - outputType: svf2
           status: success
           progress: complete
+  # Delivery timing knobs (the values shown are the defaults).
   webhook_timing:
     max_retries: 8
     retry_base_ms: 25

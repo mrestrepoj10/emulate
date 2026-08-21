@@ -2,7 +2,8 @@ import { createHmac } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { getApsStore } from "../store.js";
-import { APS_WEBHOOK_EVENTS, createWebhookRecord, setWebhookTiming, webhookEventMatches } from "../webhooks.js";
+import { APS_WEBHOOK_EVENTS } from "../webhook-events.js";
+import { createWebhookRecord, setWebhookTiming, webhookEventMatches } from "../webhooks.js";
 import { base, bearer, createTestApp, issueThreeLeggedToken, issueTwoLeggedToken } from "./test-helpers.js";
 
 interface ReceivedCallback {

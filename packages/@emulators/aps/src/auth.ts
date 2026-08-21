@@ -1,6 +1,7 @@
 import { generateKeyPair, jwtVerify } from "jose";
 import type { Context } from "@emulators/core";
 import type { AppEnv, MiddlewareHandler, Store } from "@emulators/core";
+import { parseScope } from "./helpers.js";
 
 export const APS_TOKEN_KID = "emulate-aps-1";
 export const APS_TOKEN_ISSUER = "https://developer.api.autodesk.com";
@@ -83,13 +84,17 @@ export async function accessTokenForRequest(c: Context<AppEnv>, store: Store): P
   return token ? findActiveAccessToken(store, token) : null;
 }
 
+export function tokenGrantsScopes(record: StoredAccessToken, scopes: string[]): boolean {
+  const granted = parseScope(record.scope);
+  return scopes.every((scope) => granted.includes(scope));
+}
+
 export function apsAuth(store: Store, options: { scopes: string[]; requireUser?: boolean }): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const record = await accessTokenForRequest(c, store);
     if (!record) return invalidToken(c);
 
-    const grantedScopes = record.scope.split(/\s+/).filter(Boolean);
-    if (options.scopes.some((scope) => !grantedScopes.includes(scope))) {
+    if (!tokenGrantsScopes(record, options.scopes)) {
       return insufficientPrivilege(c);
     }
     if (options.requireUser && !record.apsUserId) {

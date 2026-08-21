@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import type { AppEnv, Context } from "@emulators/core";
 import type { ApsClient, ApsUser, ApsClientType } from "./entities.js";
 
 export const DEFAULT_CONFIDENTIAL_CLIENT_ID = "aps-test-client";
@@ -62,6 +63,23 @@ export function generateUserId(): string {
 
 export function analyticsIdFor(userId: string): string {
   return createHash("sha256").update(userId).digest("hex").slice(0, 32);
+}
+
+export function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export async function jsonObjectBody(c: Context<AppEnv>): Promise<Record<string, unknown> | null> {
+  try {
+    const body = await c.req.json<unknown>();
+    return isRecordObject(body) ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+export function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 export function parseScope(scope: string): string[] {

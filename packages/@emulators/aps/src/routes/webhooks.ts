@@ -1,122 +1,145 @@
 import { randomUUID } from "node:crypto";
-import type { AppEnv, ContentfulStatusCode, Context, RouteContext } from "@emulators/core";
-import { accessTokenForRequest } from "../auth.js";
+import type { AppEnv, ContentfulStatusCode, Context, RouteContext, Store } from "@emulators/core";
+import { accessTokenForRequest, tokenGrantsScopes } from "../auth.js";
 import type { ApsWebhookFilter, ApsWebhookHook } from "../entities.js";
-import { getApsStore } from "../store.js";
+import { isRecordObject, jsonObjectBody } from "../helpers.js";
+import { getApsStore, type ApsStore } from "../store.js";
+import { APS_WEBHOOK_EVENTS, parseWebhookRegion } from "../webhook-events.js";
+import { validateWebhookFilter } from "../webhook-filter.js";
 import {
-  APS_WEBHOOK_EVENTS,
-  APS_WEBHOOK_REGIONS,
+  appIdentity,
   canonicalWebhookScope,
   createWebhookRecord,
   deleteExpiredHooks,
+  findDuplicateHook,
+  findWebhookSecret,
   type CreateWebhookRecordInput,
   type WebhookIdentity,
+  userIdentity,
   validWebhookStatus,
-  validateWebhookFilter,
   webhookDetails,
 } from "../webhooks.js";
 
 const PAGE_SIZE = 200;
 const SCOPE_QUOTA = 1000;
-
-type HookPayload = Omit<CreateWebhookRecordInput, "system" | "event" | "region" | "identity">;
+const READ_SCOPES = ["data:read"];
+const WRITE_SCOPES = ["data:read", "data:write"];
 
 function webhookError(c: Context<AppEnv>, status: ContentfulStatusCode): Response {
   return c.json({ id: randomUUID() }, status);
 }
 
-async function authorize(
+interface WebhookRequestContext {
+  identity: WebhookIdentity;
+  region: string;
+}
+
+async function webhookContext(
   c: Context<AppEnv>,
-  store: RouteContext["store"],
+  store: Store,
+  aps: ApsStore,
   scopes: string[],
   appOnly = false,
-): Promise<WebhookIdentity | Response> {
+): Promise<WebhookRequestContext | Response> {
   const token = await accessTokenForRequest(c, store);
   if (!token) return webhookError(c, 401);
-  const granted = token.scope.split(/\s+/).filter(Boolean);
-  if (scopes.some((scope) => !granted.includes(scope))) return webhookError(c, 403);
+  if (!tokenGrantsScopes(token, scopes)) return webhookError(c, 403);
   if (appOnly && token.apsUserId) return webhookError(c, 403);
-  return token.apsUserId
-    ? { key: `user:${token.apsUserId}`, createdBy: token.apsUserId, creatorType: "O2User" }
-    : { key: `app:${token.clientId}`, createdBy: token.clientId, creatorType: "Application" };
+  const region = parseWebhookRegion(
+    c.req.header("region") ?? c.req.header("x-ads-region") ?? c.req.query("region") ?? "US",
+  );
+  if (!region) return webhookError(c, 400);
+  deleteExpiredHooks(aps);
+  const identity = token.apsUserId ? userIdentity(token.apsUserId) : appIdentity(token.clientId);
+  return { identity, region };
 }
 
-function requestRegion(c: Context<AppEnv>): string | null {
-  const value = c.req.header("region") ?? c.req.header("x-ads-region") ?? c.req.query("region") ?? "US";
-  const normalized = value.toUpperCase();
-  return APS_WEBHOOK_REGIONS.includes(normalized as (typeof APS_WEBHOOK_REGIONS)[number]) ? normalized : null;
+// Field parsers distinguish a missing field (undefined) from a malformed one (INVALID),
+// so callers never have to re-consult the raw body to tell the two apart.
+const INVALID = Symbol("invalid");
+type Invalid = typeof INVALID;
+
+function optional<T>(parse: (value: unknown) => T | Invalid): (value: unknown) => T | undefined | Invalid {
+  return (value) => (value === undefined ? undefined : parse(value));
 }
 
-function recordObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+function nullable<T>(parse: (value: unknown) => T | Invalid): (value: unknown) => T | null | Invalid {
+  return (value) => (value === null ? null : parse(value));
 }
 
-async function readObject(c: Context<AppEnv>): Promise<Record<string, unknown> | null> {
-  try {
-    const body = await c.req.json<unknown>();
-    return recordObject(body) ? body : null;
-  } catch {
-    return null;
-  }
+function asString(value: unknown): string | Invalid {
+  return typeof value === "string" && value.trim() ? value : INVALID;
 }
 
-function stringField(value: unknown, nullable = false): string | null | undefined {
-  if (value === undefined) return undefined;
-  if (value === null && nullable) return null;
-  return typeof value === "string" && value.trim() ? value : undefined;
+function asBoolean(value: unknown): boolean | Invalid {
+  return typeof value === "boolean" ? value : INVALID;
 }
 
-function parseScope(value: unknown): Record<string, string> | null {
-  if (!recordObject(value)) return null;
+function asHookAttribute(value: unknown): Record<string, unknown> | Invalid {
+  return isRecordObject(value) && Buffer.byteLength(JSON.stringify(value), "utf8") < 1024 ? value : INVALID;
+}
+
+function asFilter(value: unknown): ApsWebhookFilter | Invalid {
+  const filter =
+    typeof value === "string" || (Array.isArray(value) && value.every((item) => typeof item === "string"))
+      ? (value as ApsWebhookFilter)
+      : undefined;
+  return filter !== undefined && validateWebhookFilter(filter) ? filter : INVALID;
+}
+
+function asExpiry(value: unknown): string | Invalid {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : INVALID;
+}
+
+const optString = optional(asString);
+const optBoolean = optional(asBoolean);
+const optAttribute = optional(asHookAttribute);
+const optNullableAttribute = optional(nullable(asHookAttribute));
+const optFilter = optional(nullable(asFilter));
+const optExpiry = optional(nullable(asExpiry));
+
+function parseHookScope(value: unknown): Record<string, string> | null {
+  if (!isRecordObject(value)) return null;
   const entries = Object.entries(value);
   if (!entries.length || entries.some(([, item]) => typeof item !== "string" || !item.trim())) return null;
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
-function validHookAttribute(value: unknown): value is Record<string, unknown> {
-  return recordObject(value) && Buffer.byteLength(JSON.stringify(value), "utf8") < 1024;
-}
-
-function parseFilter(value: unknown): ApsWebhookFilter | null | undefined {
-  if (value === undefined || value === null) return value;
-  if (typeof value === "string") return validateWebhookFilter(value) ? value : undefined;
-  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-    const filters = value as string[];
-    return validateWebhookFilter(filters) ? filters : undefined;
-  }
-  return undefined;
-}
-
-function parseExpiry(value: unknown): string | null | undefined {
-  if (value === undefined || value === null) return value;
-  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : undefined;
-}
+type HookPayload = Omit<CreateWebhookRecordInput, "system" | "event" | "region" | "identity">;
 
 function parseHookPayload(body: Record<string, unknown>): HookPayload | null {
-  const callbackUrl = stringField(body.callbackUrl);
-  const scope = parseScope(body.scope);
-  if (!callbackUrl || !scope) return null;
-  if (body.autoReactivateHook !== undefined && typeof body.autoReactivateHook !== "boolean") return null;
-  if (body.hookAttribute !== undefined && !validHookAttribute(body.hookAttribute)) return null;
-  const filter = parseFilter(body.filter);
-  if (body.filter !== undefined && filter === undefined) return null;
-  const hookExpiry = parseExpiry(body.hookExpiry);
-  if (body.hookExpiry !== undefined && hookExpiry === undefined) return null;
-  const token = stringField(body.token);
-  if (body.token !== undefined && token === undefined) return null;
-  const tenant = stringField(body.tenant);
-  const hubId = stringField(body.hubId);
-  const projectId = stringField(body.projectId);
-  if (body.tenant !== undefined && tenant === undefined) return null;
-  if (body.hubId !== undefined && hubId === undefined) return null;
-  if (body.projectId !== undefined && projectId === undefined) return null;
+  const callbackUrl = optString(body.callbackUrl);
+  const scope = parseHookScope(body.scope);
+  const tenant = optString(body.tenant);
+  const autoReactivateHook = optBoolean(body.autoReactivateHook);
+  const hookAttribute = optAttribute(body.hookAttribute);
+  const filter = optFilter(body.filter);
+  const hookExpiry = optExpiry(body.hookExpiry);
+  const token = optString(body.token);
+  const hubId = optString(body.hubId);
+  const projectId = optString(body.projectId);
+  if (
+    callbackUrl === undefined ||
+    callbackUrl === INVALID ||
+    !scope ||
+    tenant === INVALID ||
+    autoReactivateHook === INVALID ||
+    hookAttribute === INVALID ||
+    filter === INVALID ||
+    hookExpiry === INVALID ||
+    token === INVALID ||
+    hubId === INVALID ||
+    projectId === INVALID
+  ) {
+    return null;
+  }
   return {
     callbackUrl,
     scope,
-    tenant: tenant ?? undefined,
-    autoReactivateHook: body.autoReactivateHook as boolean | undefined,
+    tenant,
+    autoReactivateHook,
     hookExpiry,
-    hookAttribute: (body.hookAttribute as Record<string, unknown> | undefined) ?? null,
+    hookAttribute: hookAttribute ?? null,
     filter: filter ?? null,
     token: token ?? null,
     hubId: hubId ?? null,
@@ -124,40 +147,62 @@ function parseHookPayload(body: Record<string, unknown>): HookPayload | null {
   };
 }
 
-function identityHooks(hooks: ApsWebhookHook[], identity: WebhookIdentity, region: string): ApsWebhookHook[] {
-  return hooks.filter((hook) => hook.identity_key === identity.key && hook.region === region);
+function parseHookUpdate(body: Record<string, unknown>, hook: ApsWebhookHook): Partial<ApsWebhookHook> | null {
+  const status =
+    body.status === undefined || body.status === "active" || body.status === "inactive" ? body.status : INVALID;
+  const autoReactivateHook = optBoolean(body.autoReactivateHook);
+  const filter = optFilter(body.filter);
+  const hookAttribute = optNullableAttribute(body.hookAttribute);
+  const token = optString(body.token);
+  const hookExpiry = optExpiry(body.hookExpiry);
+  if (
+    status === INVALID ||
+    autoReactivateHook === INVALID ||
+    filter === INVALID ||
+    hookAttribute === INVALID ||
+    token === INVALID ||
+    hookExpiry === INVALID
+  ) {
+    return null;
+  }
+  const update: Partial<ApsWebhookHook> = {};
+  if (status !== undefined) {
+    update.status = status;
+    update.failed_event_count = status === "active" ? 0 : hook.failed_event_count;
+    update.inactive_at = status === "inactive" ? new Date().toISOString() : null;
+  }
+  if (autoReactivateHook !== undefined) update.auto_reactivate_hook = autoReactivateHook;
+  if (filter !== undefined) update.filter = filter;
+  if (hookAttribute !== undefined) update.hook_attribute = hookAttribute;
+  if (token !== undefined) update.token = token;
+  if (hookExpiry !== undefined) update.hook_expiry = hookExpiry;
+  return update;
 }
 
-function duplicateHook(
-  hooks: ApsWebhookHook[],
-  identity: WebhookIdentity,
-  region: string,
-  system: string,
-  event: string,
-  payload: HookPayload,
-): boolean {
-  const scope = canonicalWebhookScope(payload.scope);
-  return identityHooks(hooks, identity, region).some(
-    (hook) =>
-      hook.system === system &&
-      hook.event === event &&
-      hook.callback_url === payload.callbackUrl &&
-      canonicalWebhookScope(hook.scope) === scope,
-  );
+function identityHooks(aps: ApsStore, { identity, region }: WebhookRequestContext): ApsWebhookHook[] {
+  return aps.webhookHooks.all().filter((hook) => hook.identity_key === identity.key && hook.region === region);
 }
 
 function overQuota(
-  hooks: ApsWebhookHook[],
-  identity: WebhookIdentity,
-  region: string,
+  aps: ApsStore,
+  context: WebhookRequestContext,
   scope: Record<string, string>,
   additional: number,
 ): boolean {
   const canonical = canonicalWebhookScope(scope);
-  const count = identityHooks(hooks, identity, region).filter(
-    (hook) => canonicalWebhookScope(hook.scope) === canonical,
-  ).length;
+  const count = identityHooks(aps, context).filter((hook) => canonicalWebhookScope(hook.scope) === canonical).length;
   return count + additional > SCOPE_QUOTA;
+}
+
+function visibleHook(aps: ApsStore, context: WebhookRequestContext, c: Context<AppEnv>): ApsWebhookHook | undefined {
+  const hook = aps.webhookHooks.findOneBy("hook_id", c.req.param("hookId"));
+  return hook &&
+    hook.identity_key === context.identity.key &&
+    hook.region === context.region &&
+    hook.system === c.req.param("system") &&
+    hook.event === c.req.param("event")
+    ? hook
+    : undefined;
 }
 
 function encodePageState(offset: number): string {
@@ -196,37 +241,21 @@ function filterStatus(c: Context<AppEnv>, hooks: ApsWebhookHook[]): ApsWebhookHo
   return status ? hooks.filter((hook) => hook.status === status) : hooks;
 }
 
-function visibleHook(
-  hooks: ApsWebhookHook[],
-  identity: WebhookIdentity,
-  region: string,
-  system: string,
-  event: string,
-  hookId: string,
-): ApsWebhookHook | undefined {
-  return identityHooks(hooks, identity, region).find(
-    (hook) => hook.hook_id === hookId && hook.system === system && hook.event === event,
-  );
-}
-
 export function webhookRoutes({ app, store }: RouteContext): void {
   const aps = getApsStore(store);
 
   app.post("/webhooks/v1/systems/:system/events/:event/hooks", async (c) => {
-    const identity = await authorize(c, store, ["data:read", "data:write"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    const body = await readObject(c);
+    const context = await webhookContext(c, store, aps, WRITE_SCOPES);
+    if (context instanceof Response) return context;
+    const body = await jsonObjectBody(c);
     const payload = body ? parseHookPayload(body) : null;
-    if (!region || !payload) return webhookError(c, 400);
-    deleteExpiredHooks(aps);
+    if (!payload) return webhookError(c, 400);
     const system = c.req.param("system");
     const event = c.req.param("event");
-    if (duplicateHook(aps.webhookHooks.all(), identity, region, system, event, payload)) {
-      return webhookError(c, 409);
-    }
-    if (overQuota(aps.webhookHooks.all(), identity, region, payload.scope, 1)) return webhookError(c, 400);
-    const hook = createWebhookRecord(aps, { ...payload, identity, region, system, event });
+    const input = { ...payload, identity: context.identity, region: context.region, system, event };
+    if (findDuplicateHook(aps, input)) return webhookError(c, 409);
+    if (overQuota(aps, context, payload.scope, 1)) return webhookError(c, 400);
+    const hook = createWebhookRecord(aps, input);
     c.header(
       "Location",
       `/webhooks/v1/systems/${encodeURIComponent(system)}/events/${encodeURIComponent(event)}/hooks/${encodeURIComponent(hook.hook_id)}`,
@@ -235,12 +264,9 @@ export function webhookRoutes({ app, store }: RouteContext): void {
   });
 
   app.get("/webhooks/v1/systems/:system/events/:event/hooks", async (c) => {
-    const identity = await authorize(c, store, ["data:read"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    if (!region) return webhookError(c, 400);
-    deleteExpiredHooks(aps);
-    let hooks = identityHooks(aps.webhookHooks.all(), identity, region).filter(
+    const context = await webhookContext(c, store, aps, READ_SCOPES);
+    if (context instanceof Response) return context;
+    let hooks = identityHooks(aps, context).filter(
       (hook) => hook.system === c.req.param("system") && hook.event === c.req.param("event"),
     );
     const scopeName = c.req.query("scopeName");
@@ -252,142 +278,76 @@ export function webhookRoutes({ app, store }: RouteContext): void {
   });
 
   app.get("/webhooks/v1/systems/:system/events/:event/hooks/:hookId", async (c) => {
-    const identity = await authorize(c, store, ["data:read"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    if (!region) return webhookError(c, 400);
-    deleteExpiredHooks(aps);
-    const hook = visibleHook(
-      aps.webhookHooks.all(),
-      identity,
-      region,
-      c.req.param("system"),
-      c.req.param("event"),
-      c.req.param("hookId"),
-    );
+    const context = await webhookContext(c, store, aps, READ_SCOPES);
+    if (context instanceof Response) return context;
+    const hook = visibleHook(aps, context, c);
     return hook ? c.json(webhookDetails(hook)) : webhookError(c, 404);
   });
 
   app.patch("/webhooks/v1/systems/:system/events/:event/hooks/:hookId", async (c) => {
-    const identity = await authorize(c, store, ["data:read", "data:write"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    const body = await readObject(c);
-    if (!region || !body) return webhookError(c, 400);
-    deleteExpiredHooks(aps);
-    const hook = visibleHook(
-      aps.webhookHooks.all(),
-      identity,
-      region,
-      c.req.param("system"),
-      c.req.param("event"),
-      c.req.param("hookId"),
-    );
+    const context = await webhookContext(c, store, aps, WRITE_SCOPES);
+    if (context instanceof Response) return context;
+    const body = await jsonObjectBody(c);
+    if (!body) return webhookError(c, 400);
+    const hook = visibleHook(aps, context, c);
     if (!hook) return webhookError(c, 404);
-    const update: Partial<ApsWebhookHook> = {};
-    if (body.status !== undefined) {
-      if (body.status !== "active" && body.status !== "inactive") return webhookError(c, 400);
-      update.status = body.status;
-      update.failed_event_count = body.status === "active" ? 0 : hook.failed_event_count;
-      update.inactive_at = body.status === "inactive" ? new Date().toISOString() : null;
-    }
-    if (body.autoReactivateHook !== undefined) {
-      if (typeof body.autoReactivateHook !== "boolean") return webhookError(c, 400);
-      update.auto_reactivate_hook = body.autoReactivateHook;
-    }
-    if (body.filter !== undefined) {
-      const filter = parseFilter(body.filter);
-      if (filter === undefined) return webhookError(c, 400);
-      update.filter = filter;
-    }
-    if (body.hookAttribute !== undefined) {
-      if (body.hookAttribute !== null && !validHookAttribute(body.hookAttribute)) return webhookError(c, 400);
-      update.hook_attribute = body.hookAttribute as Record<string, unknown> | null;
-    }
-    if (body.token !== undefined) {
-      const token = stringField(body.token);
-      if (!token) return webhookError(c, 400);
-      update.token = token;
-    }
-    if (body.hookExpiry !== undefined) {
-      const hookExpiry = parseExpiry(body.hookExpiry);
-      if (hookExpiry === undefined) return webhookError(c, 400);
-      update.hook_expiry = hookExpiry;
-    }
+    const update = parseHookUpdate(body, hook);
+    if (!update) return webhookError(c, 400);
     aps.webhookHooks.update(hook.id, update);
     return c.body(null, 200);
   });
 
   app.delete("/webhooks/v1/systems/:system/events/:event/hooks/:hookId", async (c) => {
-    const identity = await authorize(c, store, ["data:read", "data:write"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    if (!region) return webhookError(c, 400);
-    deleteExpiredHooks(aps);
-    const hook = visibleHook(
-      aps.webhookHooks.all(),
-      identity,
-      region,
-      c.req.param("system"),
-      c.req.param("event"),
-      c.req.param("hookId"),
-    );
+    const context = await webhookContext(c, store, aps, WRITE_SCOPES);
+    if (context instanceof Response) return context;
+    const hook = visibleHook(aps, context, c);
     if (!hook) return webhookError(c, 404);
     aps.webhookHooks.delete(hook.id);
     return c.body(null, 204);
   });
 
   app.post("/webhooks/v1/systems/:system/hooks", async (c) => {
-    const identity = await authorize(c, store, ["data:read", "data:write"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    const body = await readObject(c);
+    const context = await webhookContext(c, store, aps, WRITE_SCOPES);
+    if (context instanceof Response) return context;
+    const body = await jsonObjectBody(c);
     const payload = body ? parseHookPayload(body) : null;
-    if (!region || !payload) return webhookError(c, 400);
-    deleteExpiredHooks(aps);
+    if (!payload) return webhookError(c, 400);
     const system = c.req.param("system");
     const events = APS_WEBHOOK_EVENTS[system] ?? ["*"];
-    if (overQuota(aps.webhookHooks.all(), identity, region, payload.scope, events.length)) {
-      return webhookError(c, 400);
-    }
-    if (events.some((event) => duplicateHook(aps.webhookHooks.all(), identity, region, system, event, payload))) {
-      return webhookError(c, 409);
-    }
-    const hooks = events.map((event) => createWebhookRecord(aps, { ...payload, identity, region, system, event }));
+    const inputs = events.map((event) => ({
+      ...payload,
+      identity: context.identity,
+      region: context.region,
+      system,
+      event,
+    }));
+    if (inputs.some((input) => findDuplicateHook(aps, input))) return webhookError(c, 409);
+    if (overQuota(aps, context, payload.scope, events.length)) return webhookError(c, 400);
+    const hooks = inputs.map((input) => createWebhookRecord(aps, input));
     return c.json({ hooks: hooks.map(webhookDetails) }, 201);
   });
 
   app.get("/webhooks/v1/systems/:system/hooks", async (c) => {
-    const identity = await authorize(c, store, ["data:read"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    if (!region) return webhookError(c, 400);
-    deleteExpiredHooks(aps);
-    const hooks = identityHooks(aps.webhookHooks.all(), identity, region).filter(
-      (hook) => hook.system === c.req.param("system"),
-    );
+    const context = await webhookContext(c, store, aps, READ_SCOPES);
+    if (context instanceof Response) return context;
+    const hooks = identityHooks(aps, context).filter((hook) => hook.system === c.req.param("system"));
     const filtered = filterStatus(c, hooks);
     return filtered ? listResponse(c, filtered) : webhookError(c, 400);
   });
 
   app.get("/webhooks/v1/hooks", async (c) => {
-    const identity = await authorize(c, store, ["data:read"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    if (!region) return webhookError(c, 400);
-    deleteExpiredHooks(aps);
-    const filtered = filterStatus(c, identityHooks(aps.webhookHooks.all(), identity, region));
+    const context = await webhookContext(c, store, aps, READ_SCOPES);
+    if (context instanceof Response) return context;
+    const filtered = filterStatus(c, identityHooks(aps, context));
     return filtered ? listResponse(c, filtered) : webhookError(c, 400);
   });
 
   app.get("/webhooks/v1/app/hooks", async (c) => {
-    const identity = await authorize(c, store, ["data:read"], true);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
+    const context = await webhookContext(c, store, aps, READ_SCOPES, true);
+    if (context instanceof Response) return context;
     const sort = c.req.query("sort") ?? "desc";
-    if (!region || (sort !== "asc" && sort !== "desc")) return webhookError(c, 400);
-    deleteExpiredHooks(aps);
-    const hooks = identityHooks(aps.webhookHooks.all(), identity, region).sort((left, right) => {
+    if (sort !== "asc" && sort !== "desc") return webhookError(c, 400);
+    const hooks = identityHooks(aps, context).sort((left, right) => {
       const comparison = Date.parse(left.updated_at) - Date.parse(right.updated_at);
       return sort === "asc" ? comparison : -comparison;
     });
@@ -396,37 +356,32 @@ export function webhookRoutes({ app, store }: RouteContext): void {
   });
 
   app.post("/webhooks/v1/tokens", async (c) => {
-    const identity = await authorize(c, store, ["data:read", "data:write"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    const body = await readObject(c);
-    const token = body ? stringField(body.token) : undefined;
-    if (!region || !token) return webhookError(c, 400);
-    const existing = aps.webhookSecrets.findBy("identity_key", identity.key).find((secret) => secret.region === region);
-    if (existing) return webhookError(c, 400);
-    aps.webhookSecrets.insert({ identity_key: identity.key, region, token });
-    return c.json({ status: 200, detail: [`Token created successfully for client: ${identity.createdBy}`] });
+    const context = await webhookContext(c, store, aps, WRITE_SCOPES);
+    if (context instanceof Response) return context;
+    const body = await jsonObjectBody(c);
+    const token = body ? optString(body.token) : undefined;
+    if (token === undefined || token === INVALID) return webhookError(c, 400);
+    if (findWebhookSecret(aps, context.identity.key, context.region)) return webhookError(c, 400);
+    aps.webhookSecrets.insert({ identity_key: context.identity.key, region: context.region, token });
+    return c.json({ status: 200, detail: [`Token created successfully for client: ${context.identity.createdBy}`] });
   });
 
   app.put("/webhooks/v1/tokens/@me", async (c) => {
-    const identity = await authorize(c, store, ["data:read", "data:write"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    const body = await readObject(c);
-    const token = body ? stringField(body.token) : undefined;
-    if (!region || !token) return webhookError(c, 400);
-    const existing = aps.webhookSecrets.findBy("identity_key", identity.key).find((secret) => secret.region === region);
+    const context = await webhookContext(c, store, aps, WRITE_SCOPES);
+    if (context instanceof Response) return context;
+    const body = await jsonObjectBody(c);
+    const token = body ? optString(body.token) : undefined;
+    if (token === undefined || token === INVALID) return webhookError(c, 400);
+    const existing = findWebhookSecret(aps, context.identity.key, context.region);
     if (!existing) return webhookError(c, 404);
     aps.webhookSecrets.update(existing.id, { token });
     return c.body(null, 204);
   });
 
   app.delete("/webhooks/v1/tokens/@me", async (c) => {
-    const identity = await authorize(c, store, ["data:read", "data:write"]);
-    if (identity instanceof Response) return identity;
-    const region = requestRegion(c);
-    if (!region) return webhookError(c, 400);
-    const existing = aps.webhookSecrets.findBy("identity_key", identity.key).find((secret) => secret.region === region);
+    const context = await webhookContext(c, store, aps, WRITE_SCOPES);
+    if (context instanceof Response) return context;
+    const existing = findWebhookSecret(aps, context.identity.key, context.region);
     if (!existing) return webhookError(c, 404);
     aps.webhookSecrets.delete(existing.id);
     return c.body(null, 204);

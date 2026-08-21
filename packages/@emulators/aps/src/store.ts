@@ -57,21 +57,9 @@ export function getApsStore(store: Store): ApsStore {
     sheetCollections: store.collection<ApsSheetCollection>("aps.sheetCollections", ["project_id", "collection_id"]),
     sheetVersionSets: store.collection<ApsSheetVersionSet>("aps.sheetVersionSets", ["project_id", "version_set_id"]),
     sheets: store.collection<ApsSheet>("aps.sheets", ["project_id", "sheet_id"]),
-    webhookHooks: store.collection<ApsWebhookHook>("aps.webhookHooks", [
-      "hook_id",
-      "identity_key",
-      "system",
-      "event",
-      "region",
-    ]),
-    webhookSecrets: store.collection<ApsWebhookSecret>("aps.webhookSecrets", ["identity_key", "region"]),
-    webhookDeliveries: store.collection<ApsWebhookDelivery>("aps.webhookDeliveries", ["delivery_id", "hook_id"]),
-    webhookDmVersions: store.collection<ApsWebhookDmVersion>("aps.webhookDmVersions", [
-      "version_id",
-      "item_id",
-      "folder_id",
-      "project_id",
-      "region",
-    ]),
+    webhookHooks: store.collection<ApsWebhookHook>("aps.webhookHooks", ["hook_id"]),
+    webhookSecrets: store.collection<ApsWebhookSecret>("aps.webhookSecrets", ["identity_key"]),
+    webhookDeliveries: store.collection<ApsWebhookDelivery>("aps.webhookDeliveries"),
+    webhookDmVersions: store.collection<ApsWebhookDmVersion>("aps.webhookDmVersions", ["version_id"]),
   };
 }

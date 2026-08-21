@@ -770,15 +770,6 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
             derivatives: [{ outputType: "svf2", status: "success", progress: "complete" }],
           },
         },
-        webhook_timing: {
-          max_retries: 8,
-          retry_base_ms: 25,
-          retry_max_ms: 1000,
-          failed_events_before_inactive: 5,
-          reactivate_after_ms: 1000,
-          max_reactivation_cycles: 5,
-          delivery_timeout_ms: 6000,
-        },
         webhook_dm_versions: [
           {
             version_id: "urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1",

@@ -22,7 +22,14 @@ import { simulateRoutes } from "./routes/simulate.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { seedAccFromConfig } from "./seed-acc.js";
 import { getApsStore } from "./store.js";
-import { canonicalWebhookScope, createWebhookRecord, setWebhookTiming } from "./webhooks.js";
+import {
+  appIdentity,
+  createWebhookRecord,
+  findDuplicateHook,
+  setWebhookTiming,
+  userIdentity,
+  type CreateWebhookRecordInput,
+} from "./webhooks.js";
 
 export { getApsStore, type ApsStore } from "./store.js";
 export {
@@ -157,31 +164,14 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedCo
     if (!user && !aps.clients.findOneBy("client_id", clientId)) {
       throw new Error(`APS webhook references unknown client '${clientId}'.`);
     }
-    const identity = user
-      ? { key: `user:${user.user_id}`, createdBy: user.user_id, creatorType: "O2User" as const }
-      : { key: `app:${clientId}`, createdBy: clientId, creatorType: "Application" as const };
-    const region = (hook.region ?? "US").toUpperCase();
-    const canonicalScope = canonicalWebhookScope(hook.scope);
-    const exists = aps.webhookHooks
-      .all()
-      .some(
-        (candidate) =>
-          candidate.identity_key === identity.key &&
-          candidate.region === region &&
-          candidate.system === hook.system &&
-          candidate.event === hook.event &&
-          candidate.callback_url === hook.callback_url &&
-          canonicalWebhookScope(candidate.scope) === canonicalScope,
-      );
-    if (exists) continue;
-    createWebhookRecord(aps, {
+    const input: CreateWebhookRecordInput = {
       system: hook.system,
       event: hook.event,
       callbackUrl: hook.callback_url,
       scope: hook.scope,
       tenant: hook.tenant,
-      identity,
-      region,
+      identity: user ? userIdentity(user.user_id) : appIdentity(clientId),
+      region: (hook.region ?? "US").toUpperCase(),
       status: hook.status,
       autoReactivateHook: hook.auto_reactivate_hook,
       hookExpiry: hook.hook_expiry,
@@ -190,7 +180,9 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedCo
       token: hook.token,
       hubId: hook.hub_id,
       projectId: hook.project_id,
-    });
+    };
+    if (findDuplicateHook(aps, input)) continue;
+    createWebhookRecord(aps, input);
   }
 }
 
