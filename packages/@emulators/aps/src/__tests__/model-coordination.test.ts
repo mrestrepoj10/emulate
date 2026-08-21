@@ -109,7 +109,9 @@ describe("APS Model Coordination routes", () => {
       const dmVersion = aps.documentVersions.findOneBy("version_id", document.versionUrn);
       expect(dmVersion).toBeDefined();
       expect(document.stableDocumentId).toBe(dmVersion?.item_id);
-      expect(document.documentLineage.parentFolderUrn).toBe(dmVersion?.folder_id);
+      expect(document.documentLineage.parentFolderUrn).toBe(
+        dmVersion ? aps.documentItems.findOneBy("item_id", dmVersion.item_id)?.folder_id : undefined,
+      );
       expect(document.originalSeedFileVersionUrn).toBe(dmVersion?.storage_urn);
       expect(aps.manifests.findOneBy("urn", document.bubbleUrn)).toBeDefined();
 

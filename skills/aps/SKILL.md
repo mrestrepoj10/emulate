@@ -1,6 +1,6 @@
 ---
 name: aps
-description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management, Model Derivative, Autodesk Construction Cloud workflow reads including Model Coordination, and active Webhooks for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs and projects, seeded manifests, Issues, RFIs, Sheets, model sets, clash tests, expiring clash resources, webhook subscriptions, signed callback delivery, retry lifecycle testing, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Model Derivative manifest", "ACC Issues", "ACC RFIs", "ACC Sheets", "Model Coordination", "clash test", "APS webhooks", "dm.version.added", "extraction.finished", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
+description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management, Model Derivative, Autodesk Construction Cloud workflow reads including Model Coordination, and active Webhooks for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs, projects, folder trees, item histories, seeded manifests, Issues, RFIs, Sheets, model sets, clash tests, expiring clash resources, webhook subscriptions, signed callback delivery, retry lifecycle testing, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Data Management folders", "Data Management versions", "Model Derivative manifest", "ACC Issues", "ACC RFIs", "ACC Sheets", "Model Coordination", "clash test", "APS webhooks", "dm.version.added", "extraction.finished", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
 allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 ---
 
@@ -49,6 +49,7 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/authentication/v2/logout`                    | `$APS_EMULATOR_URL/authentication/v2/logout`                    |
 | `https://developer.api.autodesk.com/project/v1/hubs`                             | `$APS_EMULATOR_URL/project/v1/hubs`                             |
 | `https://developer.api.autodesk.com/project/v1/hubs/:hubId/projects`             | `$APS_EMULATOR_URL/project/v1/hubs/:hubId/projects`             |
+| `https://developer.api.autodesk.com/data/v1/...`                                 | `$APS_EMULATOR_URL/data/v1/...`                                 |
 | `https://developer.api.autodesk.com/modelderivative/v2/designdata/formats`       | `$APS_EMULATOR_URL/modelderivative/v2/designdata/formats`       |
 | `https://developer.api.autodesk.com/modelderivative/v2/designdata/:urn/manifest` | `$APS_EMULATOR_URL/modelderivative/v2/designdata/:urn/manifest` |
 | `https://developer.api.autodesk.com/construction/issues/v1/...`                  | `$APS_EMULATOR_URL/construction/issues/v1/...`                  |
@@ -153,12 +154,24 @@ aps:
     reactivate_after_ms: 1000
     max_reactivation_cycles: 5
     delivery_timeout_ms: 6000
+  document_folders:
+    - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      project_id: b.emulate-project
+      name: Project Files
+    - id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      project_id: b.emulate-project
+      parent_folder_id: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      name: Plans
+  document_items:
+    - id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
+      project_id: b.emulate-project
+      folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      display_name: sample.rvt
   document_versions:
     - version_id: urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
       item_id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
-      folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
-      ancestor_folder_ids: [urn:adsk.wipprod:fs.folder:co.emulate-documents]
       project_id: b.emulate-project
+      version_number: 1
       display_name: sample.rvt
   model_coordination_timing:
     processing_ms: 25
@@ -180,7 +193,7 @@ aps:
       auto_reactivate_hook: true
 ```
 
-Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise. Every project `hub_id` must match a seeded hub. ACC resources use the Data Management project ID in seed config. With no config, the emulator also seeds one hub, two projects, one ACC project membership, sample workflow resources, two coordinated Docs models with manifests, and one successful clash test.
+Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise. Every project `hub_id` must match a seeded hub. Folders reference parents, items reference folders, and versions reference items; seeding validates those relationships and folder cycles. Legacy version seeds with `folder_id` and `ancestor_folder_ids` remain supported. ACC resources use the Data Management project ID in seed config. With no config, the emulator also seeds one hub, two projects, realistic document trees, one ACC project membership, sample workflow resources, two coordinated Docs models with manifests, and one successful clash test.
 
 ## 3-Legged Authorization Code Flow
 
@@ -247,7 +260,7 @@ Returns an `access_token` without a `refresh_token` or `id_token`.
 
 ## Data Management Reads
 
-Hub and project routes require a 3-legged access token carrying `data:read` and a `userid` claim. Use the authorization code flow above, then walk the seeded data:
+Hub, project, folder, item, and version routes require a 3-legged access token carrying `data:read` and a `userid` claim. Use the authorization code flow above, then follow the response relationships from the default project to its translated manifest:
 
 ```bash
 curl "$APS_URL/project/v1/hubs" \
@@ -255,9 +268,19 @@ curl "$APS_URL/project/v1/hubs" \
 
 curl "$APS_URL/project/v1/hubs/b.emulate-hub/projects" \
   -H "Authorization: Bearer <3-legged-access-token>"
+
+AUTH="Authorization: Bearer <3-legged-access-token>"
+TOP_URL="$APS_URL/project/v1/hubs/b.emulate-hub/projects/b.emulate-project/topFolders"
+ROOT_CONTENTS=$(curl -s "$TOP_URL" -H "$AUTH" | jq -r '.data[0].relationships.contents.links.related.href')
+PLANS_CONTENTS=$(curl -s "$ROOT_CONTENTS" -H "$AUTH" | jq -r '.data[] | select(.attributes.displayName == "Plans") | .relationships.contents.links.related.href')
+COORDINATION_CONTENTS=$(curl -s "$PLANS_CONTENTS" -H "$AUTH" | jq -r '.data[] | select(.attributes.displayName == "Coordination") | .relationships.contents.links.related.href')
+ITEM_URL=$(curl -s "$COORDINATION_CONTENTS" -H "$AUTH" | jq -r '.data[] | select(.attributes.displayName == "sample.rvt") | .links.self.href')
+TIP_URL=$(curl -s "$ITEM_URL" -H "$AUTH" | jq -r '.data.relationships.tip.links.related.href')
+MANIFEST_URL=$(curl -s "$TIP_URL" -H "$AUTH" | jq -r '.data.relationships.derivatives.meta.link.href')
+curl "$MANIFEST_URL" -H "$AUTH"
 ```
 
-The four available reads are `GET /project/v1/hubs`, `GET /project/v1/hubs/:hubId`, `GET /project/v1/hubs/:hubId/projects`, and `GET /project/v1/hubs/:hubId/projects/:projectId`. Responses use JSON:API envelopes with `jsonapi`, `links`, `data`, `attributes`, and `relationships`.
+The tree adds top-folder, folder detail and contents, item detail and versions, tip, and version detail reads. Folder contents returns mixed folder and item resources plus each page item's tip in `included`. It accepts `filter[type]`, `filter[extension.type]`, and zero-based `page[number]` with `page[limit]` up to 200. Responses use JSON:API envelopes with resolving `links` and `relationships`.
 
 ## Model Derivative Reads
 
@@ -455,4 +478,4 @@ const { payload } = await jwtVerify(accessToken, jwks, {
 
 ## Current Limits
 
-Data Management folder, item, version, and OSS HTTP routes; write operations; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; webhook callback verification; rate limits; and the real token propagation delay are not included yet.
+Data Management writes, storage and OSS routes, Commands, search, and refs; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; webhook callback verification; rate limits; and the real token propagation delay are not included yet.

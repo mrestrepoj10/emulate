@@ -4,6 +4,9 @@ import type {
   ApsClashGroup,
   ApsClashTest,
   ApsClient,
+  ApsDocumentFolder,
+  ApsDocumentItem,
+  ApsDocumentVersion,
   ApsHub,
   ApsIssue,
   ApsIssueType,
@@ -21,7 +24,6 @@ import type {
   ApsSignedBlob,
   ApsUser,
   ApsWebhookDelivery,
-  ApsDocumentVersion,
   ApsWebhookHook,
   ApsWebhookSecret,
 } from "./entities.js";
@@ -44,6 +46,8 @@ export interface ApsStore {
   webhookHooks: Collection<ApsWebhookHook>;
   webhookSecrets: Collection<ApsWebhookSecret>;
   webhookDeliveries: Collection<ApsWebhookDelivery>;
+  documentFolders: Collection<ApsDocumentFolder>;
+  documentItems: Collection<ApsDocumentItem>;
   documentVersions: Collection<ApsDocumentVersion>;
   modelSets: Collection<ApsModelSet>;
   modelSetVersions: Collection<ApsModelSetVersion>;
@@ -72,6 +76,12 @@ export function getApsStore(store: Store): ApsStore {
     webhookHooks: store.collection<ApsWebhookHook>("aps.webhookHooks", ["hook_id"]),
     webhookSecrets: store.collection<ApsWebhookSecret>("aps.webhookSecrets", ["identity_key"]),
     webhookDeliveries: store.collection<ApsWebhookDelivery>("aps.webhookDeliveries"),
+    documentFolders: store.collection<ApsDocumentFolder>("aps.documentFolders", [
+      "folder_id",
+      "project_id",
+      "parent_folder_id",
+    ]),
+    documentItems: store.collection<ApsDocumentItem>("aps.documentItems", ["item_id", "project_id", "folder_id"]),
     documentVersions: store.collection<ApsDocumentVersion>("aps.documentVersions", ["version_id", "item_id"]),
     modelSets: store.collection<ApsModelSet>("aps.modelSets", ["project_id", "model_set_id"]),
     modelSetVersions: store.collection<ApsModelSetVersion>("aps.modelSetVersions", ["model_set_id", "version"]),

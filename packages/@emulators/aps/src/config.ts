@@ -1,11 +1,13 @@
 import type { ApsClientType, ApsIssuePermission, ApsManifestDerivative } from "./entities.js";
 import {
   DEFAULT_HUB_ID,
+  DEFAULT_COORDINATION_FOLDER_ID,
   DEFAULT_MANIFEST_URN,
   DEFAULT_PROJECT_ID,
   DEFAULT_SECOND_DOCUMENT_ITEM_ID,
   DEFAULT_SECOND_DOCUMENT_VERSION_ID,
   DEFAULT_SECOND_MANIFEST_URN,
+  DEFAULT_SHARED_FOLDER_ID,
   DEFAULT_WEBHOOK_CHILD_FOLDER_ID,
   DEFAULT_WEBHOOK_FOLDER_ID,
   DEFAULT_WEBHOOK_ITEM_ID,
@@ -20,15 +22,58 @@ export interface ApsAccActorSeed {
 export interface ApsDocumentVersionSeed {
   version_id: string;
   item_id: string;
-  folder_id: string;
+  folder_id?: string;
   ancestor_folder_ids?: string[];
   project_id: string;
+  version_number?: number;
   display_name?: string;
+  file_type?: string;
+  mime_type?: string;
+  storage_size?: number;
   storage_urn?: string;
   region?: string;
-  bubble_urn?: string;
+  bubble_urn?: string | null;
   viewable_id?: string;
   viewable_guid?: string;
+  created_by?: string;
+  created_by_name?: string;
+  create_time?: string;
+  last_modified_by?: string;
+  last_modified_by_name?: string;
+  last_modified_time?: string;
+}
+
+export interface ApsDocumentFolderSeed {
+  id: string;
+  project_id: string;
+  parent_folder_id?: string;
+  name: string;
+  hidden?: boolean;
+  created_by?: string;
+  created_by_name?: string;
+  create_time?: string;
+  last_modified_by?: string;
+  last_modified_by_name?: string;
+  last_modified_time?: string;
+}
+
+export interface ApsDocumentItemSeed {
+  id: string;
+  project_id: string;
+  folder_id: string;
+  display_name: string;
+  hidden?: boolean;
+  reserved?: boolean;
+  reserved_time?: string;
+  reserved_by?: string;
+  reserved_by_name?: string;
+  extension_type?: string;
+  created_by?: string;
+  created_by_name?: string;
+  create_time?: string;
+  last_modified_by?: string;
+  last_modified_by_name?: string;
+  last_modified_time?: string;
 }
 
 export interface ApsSeedConfig {
@@ -207,6 +252,8 @@ export interface ApsSeedConfig {
   >;
   webhook_timing?: Partial<ApsWebhookTimingConfig>;
   model_coordination_timing?: Partial<ApsModelCoordinationTimingConfig>;
+  document_folders?: ApsDocumentFolderSeed[];
+  document_items?: ApsDocumentItemSeed[];
   document_versions?: ApsDocumentVersionSeed[];
   /** @deprecated Use document_versions. */
   webhook_dm_versions?: ApsDocumentVersionSeed[];
@@ -496,29 +543,163 @@ export const DEFAULT_DATA_SEED = {
       updated_at: DEFAULT_ACC_TIMESTAMP,
     },
   ],
+  document_folders: [
+    {
+      id: DEFAULT_WEBHOOK_FOLDER_ID,
+      project_id: DEFAULT_PROJECT_ID,
+      name: "Project Files",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    {
+      id: DEFAULT_WEBHOOK_CHILD_FOLDER_ID,
+      project_id: DEFAULT_PROJECT_ID,
+      parent_folder_id: DEFAULT_WEBHOOK_FOLDER_ID,
+      name: "Plans",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    {
+      id: DEFAULT_COORDINATION_FOLDER_ID,
+      project_id: DEFAULT_PROJECT_ID,
+      parent_folder_id: DEFAULT_WEBHOOK_CHILD_FOLDER_ID,
+      name: "Coordination",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    {
+      id: DEFAULT_SHARED_FOLDER_ID,
+      project_id: DEFAULT_PROJECT_ID,
+      parent_folder_id: DEFAULT_WEBHOOK_FOLDER_ID,
+      name: "Shared",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    {
+      id: "urn:adsk.wipprod:fs.folder:co.emulate-infrastructure-root",
+      project_id: "b.emulate-infrastructure",
+      name: "Project Files",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    {
+      id: "urn:adsk.wipprod:fs.folder:co.emulate-infrastructure-design",
+      project_id: "b.emulate-infrastructure",
+      parent_folder_id: "urn:adsk.wipprod:fs.folder:co.emulate-infrastructure-root",
+      name: "Design",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    {
+      id: "urn:adsk.wipprod:fs.folder:co.emulate-infrastructure-shared",
+      project_id: "b.emulate-infrastructure",
+      parent_folder_id: "urn:adsk.wipprod:fs.folder:co.emulate-infrastructure-root",
+      name: "Shared",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+  ],
+  document_items: [
+    {
+      id: DEFAULT_WEBHOOK_ITEM_ID,
+      project_id: DEFAULT_PROJECT_ID,
+      folder_id: DEFAULT_COORDINATION_FOLDER_ID,
+      display_name: "sample.rvt",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    {
+      id: DEFAULT_SECOND_DOCUMENT_ITEM_ID,
+      project_id: DEFAULT_PROJECT_ID,
+      folder_id: DEFAULT_COORDINATION_FOLDER_ID,
+      display_name: "structural.rvt",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    {
+      id: "urn:adsk.wipprod:dm.lineage:emulate-coordination-report",
+      project_id: DEFAULT_PROJECT_ID,
+      folder_id: DEFAULT_WEBHOOK_CHILD_FOLDER_ID,
+      display_name: "coordination-report.pdf",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    {
+      id: "urn:adsk.wipprod:dm.lineage:emulate-road-model",
+      project_id: "b.emulate-infrastructure",
+      folder_id: "urn:adsk.wipprod:fs.folder:co.emulate-infrastructure-design",
+      display_name: "road-design.dwg",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    {
+      id: "urn:adsk.wipprod:dm.lineage:emulate-infrastructure-report",
+      project_id: "b.emulate-infrastructure",
+      folder_id: "urn:adsk.wipprod:fs.folder:co.emulate-infrastructure-shared",
+      display_name: "site-report.pdf",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+  ],
   document_versions: [
     {
       version_id: DEFAULT_WEBHOOK_VERSION_ID,
       item_id: DEFAULT_WEBHOOK_ITEM_ID,
-      folder_id: DEFAULT_WEBHOOK_CHILD_FOLDER_ID,
-      ancestor_folder_ids: [DEFAULT_WEBHOOK_FOLDER_ID],
       project_id: DEFAULT_PROJECT_ID,
+      version_number: 1,
       display_name: "sample.rvt",
+      file_type: "rvt",
+      mime_type: "application/vnd.autodesk.revit",
+      storage_size: 4096,
       storage_urn: "urn:adsk.objects:os.object:emulate-bucket/sample.rvt",
       region: "US",
+      create_time: DEFAULT_ACC_TIMESTAMP,
     },
     {
       version_id: DEFAULT_SECOND_DOCUMENT_VERSION_ID,
       item_id: DEFAULT_SECOND_DOCUMENT_ITEM_ID,
-      folder_id: DEFAULT_WEBHOOK_CHILD_FOLDER_ID,
-      ancestor_folder_ids: [DEFAULT_WEBHOOK_FOLDER_ID],
       project_id: DEFAULT_PROJECT_ID,
+      version_number: 1,
       display_name: "structural.rvt",
+      file_type: "rvt",
+      mime_type: "application/vnd.autodesk.revit",
+      storage_size: 6144,
       storage_urn: "urn:adsk.objects:os.object:emulate-bucket/structural.rvt",
       region: "US",
       bubble_urn: DEFAULT_SECOND_MANIFEST_URN,
       viewable_id: "emulate-structural-3d-view",
       viewable_guid: "14141414-1414-4141-8141-141414141414",
+      create_time: DEFAULT_ACC_TIMESTAMP,
+    },
+    ...[1, 2, 3].map((version) => ({
+      version_id: `urn:adsk.wipprod:fs.file:vf.emulate-coordination-report?version=${version}`,
+      item_id: "urn:adsk.wipprod:dm.lineage:emulate-coordination-report",
+      project_id: DEFAULT_PROJECT_ID,
+      version_number: version,
+      display_name: "coordination-report.pdf",
+      file_type: "pdf",
+      mime_type: "application/pdf",
+      storage_size: 1024 * version,
+      storage_urn: `urn:adsk.objects:os.object:emulate-bucket/coordination-report-v${version}.pdf`,
+      region: "US",
+      bubble_urn: null,
+      create_time: `2026-08-${String(16 + version).padStart(2, "0")}T12:00:00.000Z`,
+    })),
+    ...[1, 2].map((version) => ({
+      version_id: `urn:adsk.wipprod:fs.file:vf.emulate-road-model?version=${version}`,
+      item_id: "urn:adsk.wipprod:dm.lineage:emulate-road-model",
+      project_id: "b.emulate-infrastructure",
+      version_number: version,
+      display_name: "road-design.dwg",
+      file_type: "dwg",
+      mime_type: "application/acad",
+      storage_size: 2048 * version,
+      storage_urn: `urn:adsk.objects:os.object:emulate-bucket/road-design-v${version}.dwg`,
+      region: "US",
+      bubble_urn: null,
+      create_time: `2026-08-${String(17 + version).padStart(2, "0")}T12:00:00.000Z`,
+    })),
+    {
+      version_id: "urn:adsk.wipprod:fs.file:vf.emulate-infrastructure-report?version=1",
+      item_id: "urn:adsk.wipprod:dm.lineage:emulate-infrastructure-report",
+      project_id: "b.emulate-infrastructure",
+      version_number: 1,
+      display_name: "site-report.pdf",
+      file_type: "pdf",
+      mime_type: "application/pdf",
+      storage_size: 1536,
+      storage_urn: "urn:adsk.objects:os.object:emulate-bucket/site-report.pdf",
+      region: "US",
+      bubble_urn: null,
+      create_time: DEFAULT_ACC_TIMESTAMP,
     },
   ],
   manifests: {
@@ -640,7 +821,7 @@ export const DEFAULT_DATA_SEED = {
       name: "Sample Building Coordination",
       description: "Architectural and structural coordination model set",
       root_folder_urn: DEFAULT_WEBHOOK_FOLDER_ID,
-      folder_urns: [DEFAULT_WEBHOOK_CHILD_FOLDER_ID],
+      folder_urns: [DEFAULT_COORDINATION_FOLDER_ID],
       document_version_ids: [DEFAULT_WEBHOOK_VERSION_ID, DEFAULT_SECOND_DOCUMENT_VERSION_ID],
       created_by: "testuser@autodesk.local",
       created_time: DEFAULT_ACC_TIMESTAMP,

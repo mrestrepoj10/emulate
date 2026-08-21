@@ -770,13 +770,33 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
             derivatives: [{ outputType: "svf2", status: "success", progress: "complete" }],
           },
         },
-        webhook_dm_versions: [
+        document_folders: [
+          {
+            id: "urn:adsk.wipprod:fs.folder:co.emulate-documents",
+            project_id: "b.emulate-project",
+            name: "Project Files",
+          },
+          {
+            id: "urn:adsk.wipprod:fs.folder:co.emulate-plans",
+            project_id: "b.emulate-project",
+            parent_folder_id: "urn:adsk.wipprod:fs.folder:co.emulate-documents",
+            name: "Plans",
+          },
+        ],
+        document_items: [
+          {
+            id: "urn:adsk.wipprod:dm.lineage:emulate-sample-model",
+            project_id: "b.emulate-project",
+            folder_id: "urn:adsk.wipprod:fs.folder:co.emulate-plans",
+            display_name: "sample.rvt",
+          },
+        ],
+        document_versions: [
           {
             version_id: "urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1",
             item_id: "urn:adsk.wipprod:dm.lineage:emulate-sample-model",
-            folder_id: "urn:adsk.wipprod:fs.folder:co.emulate-plans",
-            ancestor_folder_ids: ["urn:adsk.wipprod:fs.folder:co.emulate-documents"],
             project_id: "b.emulate-project",
+            version_number: 1,
             display_name: "sample.rvt",
           },
         ],

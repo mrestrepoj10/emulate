@@ -382,10 +382,11 @@ describe("APS webhook delivery", () => {
       source: "urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1",
       version: "1",
       project: "emulate-project",
-      parentFolderUrn: "urn:adsk.wipprod:fs.folder:co.emulate-plans",
+      parentFolderUrn: "urn:adsk.wipprod:fs.folder:co.emulate-coordination",
       ancestors: [
-        { urn: "urn:adsk.wipprod:fs.folder:co.emulate-documents" },
-        { urn: "urn:adsk.wipprod:fs.folder:co.emulate-plans" },
+        { urn: "urn:adsk.wipprod:fs.folder:co.emulate-documents", name: "Project Files" },
+        { urn: "urn:adsk.wipprod:fs.folder:co.emulate-plans", name: "Plans" },
+        { urn: "urn:adsk.wipprod:fs.folder:co.emulate-coordination", name: "Coordination" },
       ],
     });
 

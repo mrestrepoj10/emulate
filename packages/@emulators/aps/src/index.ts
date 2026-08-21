@@ -1,6 +1,7 @@
 import type { Hono } from "@emulators/core";
 import type { AppEnv, RouteContext, ServicePlugin, Store, TokenMap, WebhookDispatcher } from "@emulators/core";
 import { DEFAULT_DATA_SEED, type ApsSeedConfig } from "./config.js";
+import { seedDocumentTreeFromConfig } from "./dm-tree.js";
 import {
   getModelCoordinationTiming,
   seedModelCoordinationFromConfig,
@@ -11,7 +12,6 @@ import {
   createDefaultPublicClient,
   createDefaultUser,
   DEFAULT_CONFIDENTIAL_CLIENT_ID,
-  DEFAULT_MANIFEST_URN,
   DEFAULT_PUBLIC_CLIENT_ID,
   DEFAULT_USER_EMAIL,
   generateUserId,
@@ -46,6 +46,8 @@ export {
   DEFAULT_MODEL_COORDINATION_TIMING,
   DEFAULT_WEBHOOK_TIMING,
   type ApsDocumentVersionSeed,
+  type ApsDocumentFolderSeed,
+  type ApsDocumentItemSeed,
   type ApsModelCoordinationTimingConfig,
   type ApsSeedConfig,
   type ApsWebhookTimingConfig,
@@ -149,27 +151,7 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedCo
 
   if (config.webhook_timing) setWebhookTiming(store, config.webhook_timing);
 
-  for (const version of [...(config.document_versions ?? []), ...(config.webhook_dm_versions ?? [])]) {
-    if (aps.documentVersions.findOneBy("version_id", version.version_id)) continue;
-    if (!aps.projects.findOneBy("project_id", version.project_id)) {
-      throw new Error(
-        `APS document version '${version.version_id}' references unknown project '${version.project_id}'.`,
-      );
-    }
-    aps.documentVersions.insert({
-      version_id: version.version_id,
-      item_id: version.item_id,
-      folder_id: version.folder_id,
-      ancestor_folder_ids: [...(version.ancestor_folder_ids ?? [])],
-      project_id: version.project_id,
-      display_name: version.display_name ?? "model.rvt",
-      storage_urn: version.storage_urn ?? `urn:adsk.objects:os.object:emulate-bucket/${version.version_id}`,
-      region: (version.region ?? "US").toUpperCase(),
-      bubble_urn: version.bubble_urn ?? DEFAULT_MANIFEST_URN,
-      viewable_id: version.viewable_id ?? "emulate-3d-view",
-      viewable_guid: version.viewable_guid ?? "d8e734a8-6e9e-4f4d-9a4f-000000000001",
-    });
-  }
+  seedDocumentTreeFromConfig(aps, config);
 
   seedModelCoordinationFromConfig(aps, store, config);
 

@@ -477,8 +477,28 @@ aps:
         - outputType: svf2
           status: success
           progress: complete
+  document_folders:
+    - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      project_id: b.emulate-project
+      name: Project Files
+    - id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      project_id: b.emulate-project
+      parent_folder_id: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      name: Plans
+  document_items:
+    - id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
+      project_id: b.emulate-project
+      folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      display_name: sample.rvt
+  document_versions:
+    - version_id: urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+      item_id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
+      project_id: b.emulate-project
+      version_number: 1
+      display_name: sample.rvt
 ```
 
 Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise.
 Every APS project `hub_id` must match a hub in the effective seed data.
+Folders reference parents, items reference folders, and versions reference items. Invalid parents and folder cycles fail during seeding.
 ACC resources use the Data Management project ID in seed config. Remove `b.` for Issues and RFIs request paths. Sheets accepts either form.

@@ -175,18 +175,59 @@ export interface ApsWebhookDelivery extends Entity {
   signature_present: boolean;
 }
 
+export interface ApsDocumentFolder extends Entity {
+  folder_id: string;
+  project_id: string;
+  parent_folder_id: string | null;
+  name: string;
+  hidden: boolean;
+  created_by: string;
+  created_by_name: string;
+  create_time: string;
+  last_modified_by: string;
+  last_modified_by_name: string;
+  last_modified_time: string;
+}
+
+export interface ApsDocumentItem extends Entity {
+  item_id: string;
+  project_id: string;
+  folder_id: string;
+  display_name: string;
+  hidden: boolean;
+  reserved: boolean;
+  reserved_time: string | null;
+  reserved_by: string | null;
+  reserved_by_name: string | null;
+  created_by: string;
+  created_by_name: string;
+  create_time: string;
+  last_modified_by: string;
+  last_modified_by_name: string;
+  last_modified_time: string;
+  extension_type: string;
+}
+
 export interface ApsDocumentVersion extends Entity {
   version_id: string;
   item_id: string;
-  folder_id: string;
-  ancestor_folder_ids: string[];
   project_id: string;
+  version_number: number;
   display_name: string;
+  file_type: string;
+  mime_type: string;
+  storage_size: number;
   storage_urn: string;
   region: string;
-  bubble_urn: string;
+  bubble_urn: string | null;
   viewable_id: string;
   viewable_guid: string;
+  created_by: string;
+  created_by_name: string;
+  create_time: string;
+  last_modified_by: string;
+  last_modified_by_name: string;
+  last_modified_time: string;
 }
 
 export type ApsModelSetVersionStatus = "Pending" | "Processing" | "Successful" | "Partial" | "Failed";

@@ -14,6 +14,7 @@ import type {
   ApsModelSetVersion,
 } from "./entities.js";
 import { bareProjectId } from "./acc.js";
+import { documentItemForVersion, folderAncestors, itemTip } from "./dm-tree.js";
 import { DEFAULT_USER_EMAIL } from "./helpers.js";
 import { putSignedBlob } from "./signed-blobs.js";
 import type { ApsStore } from "./store.js";
@@ -55,15 +56,19 @@ function checksum(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function modelSetDocument(version: ApsDocumentVersion, createTime: string): ApsModelSetDocumentVersion {
+function modelSetDocument(aps: ApsStore, version: ApsDocumentVersion): ApsModelSetDocumentVersion {
+  const item = documentItemForVersion(aps, version);
+  if (!item) throw new Error(`APS document version '${version.version_id}' references an unknown item.`);
+  if (!version.bubble_urn) throw new Error(`APS document version '${version.version_id}' has no translated manifest.`);
+  const tip = itemTip(aps, item.item_id);
   return {
     stableDocumentId: version.item_id,
     unstableDocumentId: version.version_id,
     documentLineage: {
       lineageUrn: version.item_id,
-      parentFolderUrn: version.folder_id,
+      parentFolderUrn: item.folder_id,
       isAligned: true,
-      tipVersionUrn: version.version_id,
+      tipVersionUrn: tip?.version_id ?? version.version_id,
     },
     alignment: {
       transform: [...IDENTITY_TRANSFORM],
@@ -71,21 +76,21 @@ function modelSetDocument(version: ApsDocumentVersion, createTime: string): ApsM
       upAxis: [0, 0, 1],
       distanceUnit: "feet",
     },
-    isTipVersion: true,
+    isTipVersion: tip?.version_id === version.version_id,
     documentStatus: "Succeeded",
     forgeType: "versions:autodesk.bim360:Document",
     versionUrn: version.version_id,
     displayName: version.display_name,
-    revision: "1",
+    revision: String(version.version_number),
     viewableName: "{3D}",
-    createUserId: DEFAULT_USER_EMAIL,
-    createTime,
+    createUserId: version.created_by,
+    createTime: version.create_time,
     viewableGuid: version.viewable_guid,
     viewableId: version.viewable_id,
     viewableMime: "application/autodesk-svf2",
     bubbleUrn: version.bubble_urn,
     isSvf2Supported: true,
-    originalSeedFileVersionSize: 0,
+    originalSeedFileVersionSize: version.storage_size,
     originalSeedFileVersionUrn: version.storage_urn,
     originalSeedFileVersionName: version.display_name,
   };
@@ -141,11 +146,14 @@ export function modelSetPayload(aps: ApsStore, modelSet: ApsModelSet) {
     ...modelSetSummaryPayload(modelSet),
     modelSetType: "ProjectFiles",
     folders: modelSet.folder_urns.map((folderUrn) => ({ folderUrn })),
-    includedFolders: modelSet.folder_urns.map((folderUrn) => ({
-      folderUrn,
-      folderName: "Plans",
-      parentFolderUrn: modelSet.root_folder_urn,
-    })),
+    includedFolders: modelSet.folder_urns.map((folderUrn) => {
+      const folder = aps.documentFolders.findOneBy("folder_id", folderUrn);
+      return {
+        folderUrn,
+        folderName: folder?.name ?? "",
+        parentFolderUrn: folder?.parent_folder_id ?? modelSet.root_folder_urn,
+      };
+    }),
     accessedTime: modelSet.modified_time,
     isInactive: false,
     tipVersion,
@@ -229,7 +237,7 @@ export function seedModelCoordinationFromConfig(aps: ApsStore, store: Store, con
       if (document.project_id !== project.project_id) {
         throw new Error(`APS model set '${seed.id}' references a document version from another project.`);
       }
-      if (!aps.manifests.findOneBy("urn", document.bubble_urn)) {
+      if (!document.bubble_urn || !aps.manifests.findOneBy("urn", document.bubble_urn)) {
         throw new Error(`APS document version '${id}' references unknown manifest '${document.bubble_urn}'.`);
       }
       return document;
@@ -238,13 +246,29 @@ export function seedModelCoordinationFromConfig(aps: ApsStore, store: Store, con
 
     const createdTime = seed.created_time ?? new Date().toISOString();
     const actor = seed.created_by ?? DEFAULT_USER_EMAIL;
+    const documentItems = documents.map((document) => documentItemForVersion(aps, document));
+    if (documentItems.some((item) => !item)) {
+      throw new Error(`APS model set '${seed.id}' references a document with no item.`);
+    }
+    const firstItem = documentItems[0]!;
+    const rootFolderUrn =
+      seed.root_folder_urn ??
+      folderAncestors(aps, project.project_id, firstItem.folder_id)[0]?.folder_id ??
+      firstItem.folder_id;
+    const folderUrns = seed.folder_urns ?? [...new Set(documentItems.map((item) => item!.folder_id))];
+    for (const folderUrn of [rootFolderUrn, ...folderUrns]) {
+      const folder = aps.documentFolders.findOneBy("folder_id", folderUrn);
+      if (!folder || folder.project_id !== project.project_id) {
+        throw new Error(`APS model set '${seed.id}' references unknown folder '${folderUrn}'.`);
+      }
+    }
     const modelSet = aps.modelSets.insert({
       project_id: project.project_id,
       model_set_id: seed.id,
       name: seed.name,
       description: seed.description ?? "",
-      root_folder_urn: seed.root_folder_urn ?? documents[0].ancestor_folder_ids[0] ?? documents[0].folder_id,
-      folder_urns: [...(seed.folder_urns ?? [...new Set(documents.map((item) => item.folder_id))])],
+      root_folder_urn: rootFolderUrn,
+      folder_urns: [...folderUrns],
       created_by: actor,
       created_time: createdTime,
       modified_by: actor,
@@ -257,7 +281,7 @@ export function seedModelCoordinationFromConfig(aps: ApsStore, store: Store, con
       version: 1,
       create_time: createdTime,
       status: "Successful",
-      document_versions: documents.map((document) => modelSetDocument(document, createdTime)),
+      document_versions: documents.map((document) => modelSetDocument(aps, document)),
     });
     aps.modelSetViews.insert({
       model_set_id: modelSet.model_set_id,

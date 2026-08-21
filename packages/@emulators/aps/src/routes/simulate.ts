@@ -1,5 +1,6 @@
 import type { AppEnv, Context, RouteContext } from "@emulators/core";
 import { bareProjectId } from "../acc.js";
+import { documentItemForVersion, folderAncestors } from "../dm-tree.js";
 import {
   DEFAULT_MANIFEST_URN,
   DEFAULT_PROJECT_ID,
@@ -90,29 +91,30 @@ export function simulateRoutes({ app, store }: RouteContext): void {
       ? aps.documentVersions.findOneBy("version_id", requestedVersionId)
       : aps.documentVersions.all()[0];
     if (!version) return simulatorError(c, "The seeded Data Management version was not found.", 404);
-    const now = new Date().toISOString();
+    const item = documentItemForVersion(aps, version);
+    if (!item) return simulatorError(c, "The seeded Data Management item was not found.", 404);
+    const folder = aps.documentFolders.findOneBy("folder_id", item.folder_id);
+    if (!folder) return simulatorError(c, "The seeded Data Management folder was not found.", 404);
+    const ancestors = folderAncestors(aps, version.project_id, folder.folder_id);
     const projectId = bareProjectId(version.project_id);
     const payload = {
-      ext: version.display_name.split(".").pop() ?? "",
-      modifiedTime: now,
-      creator: "testuser@autodesk.local",
+      ext: version.file_type,
+      modifiedTime: version.last_modified_time,
+      creator: version.created_by,
       lineageUrn: version.item_id,
-      sizeInBytes: 0,
-      hidden: false,
+      sizeInBytes: version.storage_size,
+      hidden: item.hidden,
       indexable: true,
       project: projectId,
       source: version.version_id,
-      version: "1",
-      user_info: { id: "testuser@autodesk.local" },
+      version: String(version.version_number),
+      user_info: { id: version.created_by },
       name: version.display_name,
-      createdTime: now,
-      modifiedBy: "testuser@autodesk.local",
+      createdTime: version.create_time,
+      modifiedBy: version.last_modified_by,
       state: "CONTENT_AVAILABLE",
-      parentFolderUrn: version.folder_id,
-      ancestors: [...version.ancestor_folder_ids, version.folder_id].map((urn, index) => ({
-        urn,
-        name: index === version.ancestor_folder_ids.length ? "Plans" : `Ancestor ${index + 1}`,
-      })),
+      parentFolderUrn: folder.folder_id,
+      ancestors: [...ancestors, folder].map((ancestor) => ({ urn: ancestor.folder_id, name: ancestor.name })),
       tenant: projectId,
     };
     const report = await simulateWebhookEvent(aps, store, {
@@ -120,8 +122,8 @@ export function simulateRoutes({ app, store }: RouteContext): void {
       event: "dm.version.added",
       resourceUrn: version.version_id,
       region: version.region,
-      scope: { folder: version.folder_id, project: version.project_id },
-      folderAncestors: version.ancestor_folder_ids,
+      scope: { folder: folder.folder_id, project: version.project_id },
+      folderAncestors: ancestors.map((ancestor) => ancestor.folder_id),
       payload,
     });
     return c.json(report);

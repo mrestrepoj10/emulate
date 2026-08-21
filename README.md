@@ -991,6 +991,13 @@ Autodesk Platform Services (formerly Forge) emulation with authentication v2, Da
 - `GET /project/v1/hubs/:hubId` - get a hub with a 3-legged token
 - `GET /project/v1/hubs/:hubId/projects` - list projects with a 3-legged token
 - `GET /project/v1/hubs/:hubId/projects/:projectId` - get a project with a 3-legged token
+- `GET /project/v1/hubs/:hubId/projects/:projectId/topFolders` - list a project's top folders
+- `GET /data/v1/projects/:projectId/folders/:folderId` - get a folder
+- `GET /data/v1/projects/:projectId/folders/:folderId/contents` - list mixed child folders and items with included tips
+- `GET /data/v1/projects/:projectId/items/:itemId` - get an item with its included tip
+- `GET /data/v1/projects/:projectId/items/:itemId/versions` - list an item's version history
+- `GET /data/v1/projects/:projectId/items/:itemId/tip` - get an item's tip version
+- `GET /data/v1/projects/:projectId/versions/:versionId` - get a version by URL-encoded URN
 - `GET /modelderivative/v2/designdata/formats` - list translation formats with a 2-legged or 3-legged token
 - `GET /modelderivative/v2/designdata/:urn/manifest` - get a seeded manifest with a 2-legged or 3-legged token
 - `GET /construction/issues/v1/projects/:projectId/users/me` - get current-user Issues permissions
@@ -1033,6 +1040,7 @@ Real APS paths map 1:1 onto the emulator:
 | --------------------------------------------------------------- | ---------------------------------------------- |
 | `https://developer.api.autodesk.com/authentication/v2/...`      | `$APS_EMULATOR_URL/authentication/v2/...`      |
 | `https://developer.api.autodesk.com/project/v1/...`             | `$APS_EMULATOR_URL/project/v1/...`             |
+| `https://developer.api.autodesk.com/data/v1/...`                | `$APS_EMULATOR_URL/data/v1/...`                |
 | `https://developer.api.autodesk.com/modelderivative/v2/...`     | `$APS_EMULATOR_URL/modelderivative/v2/...`     |
 | `https://developer.api.autodesk.com/construction/issues/v1/...` | `$APS_EMULATOR_URL/construction/issues/v1/...` |
 | `https://developer.api.autodesk.com/construction/rfis/v3/...`   | `$APS_EMULATOR_URL/construction/rfis/v3/...`   |
@@ -1042,7 +1050,7 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/webhooks/v1/...`            | `$APS_EMULATOR_URL/webhooks/v1/...`            |
 | `https://api.userprofile.autodesk.com/userinfo`                 | `$APS_EMULATOR_URL/userinfo`                   |
 
-With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, a user `testuser@autodesk.local`, one hub, two projects, one ACC project membership, sample Issues, RFIs, Sheets, two coordinated Docs models with completed manifests, and one successful model set version and clash test. Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Authorization codes are single use and expire after 5 minutes. Refresh tokens live for 15 days and are single use: every refresh returns a new refresh token, and replaying an already-used refresh token invalidates the whole grant family, matching real APS behavior. PKCE supports `S256` only and is required for public clients.
+With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, a user `testuser@autodesk.local`, one hub, two projects, realistic folder trees with item histories, one ACC project membership, sample Issues, RFIs, Sheets, two coordinated Docs models with completed manifests, and one successful model set version and clash test. Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Authorization codes are single use and expire after 5 minutes. Refresh tokens live for 15 days and are single use: every refresh returns a new refresh token, and replaying an already-used refresh token invalidates the whole grant family, matching real APS behavior. PKCE supports `S256` only and is required for public clients.
 
 ```yaml
 aps:
@@ -1135,12 +1143,24 @@ aps:
     reactivate_after_ms: 1000
     max_reactivation_cycles: 5
     delivery_timeout_ms: 6000
+  document_folders:
+    - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      project_id: b.emulate-project
+      name: Project Files
+    - id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      project_id: b.emulate-project
+      parent_folder_id: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      name: Plans
+  document_items:
+    - id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
+      project_id: b.emulate-project
+      folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      display_name: sample.rvt
   document_versions:
     - version_id: urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
       item_id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
-      folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
-      ancestor_folder_ids: [urn:adsk.wipprod:fs.folder:co.emulate-documents]
       project_id: b.emulate-project
+      version_number: 1
       display_name: sample.rvt
   model_coordination_timing:
     processing_ms: 25
@@ -1164,7 +1184,28 @@ aps:
 
 Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise.
 Every project `hub_id` must match a seeded hub.
-ACC resources use the Data Management project ID in seed config. Issues, RFIs, and Model Coordination use that ID without `b.` in request paths. Sheets accepts either form. Issues, RFIs, and Model Coordination require a 3-legged user-context token. Sheets accepts 2-legged tokens and supports optional `x-user-id` impersonation.
+Folders reference their parent, items reference their folder, and versions reference their item. Seeding validates those relationships and rejects folder cycles. The deprecated `folder_id` and `ancestor_folder_ids` fields on version seeds remain supported for older configs. ACC resources use the Data Management project ID in seed config. Issues, RFIs, and Model Coordination use that ID without `b.` in request paths. Sheets accepts either form. Data Management, Issues, RFIs, and Model Coordination require a 3-legged user-context token. Sheets accepts 2-legged tokens and supports optional `x-user-id` impersonation.
+
+### APS Data Management
+
+Use the resolving JSON:API relationships to walk from the default project to a translated version and its manifest:
+
+```bash
+APS_URL="http://localhost:4014"
+ACCESS_TOKEN="<3-legged-access-token>"
+AUTH="Authorization: Bearer $ACCESS_TOKEN"
+
+TOP_URL="$APS_URL/project/v1/hubs/b.emulate-hub/projects/b.emulate-project/topFolders"
+ROOT_CONTENTS=$(curl -s "$TOP_URL" -H "$AUTH" | jq -r '.data[0].relationships.contents.links.related.href')
+PLANS_CONTENTS=$(curl -s "$ROOT_CONTENTS" -H "$AUTH" | jq -r '.data[] | select(.attributes.displayName == "Plans") | .relationships.contents.links.related.href')
+COORDINATION_CONTENTS=$(curl -s "$PLANS_CONTENTS" -H "$AUTH" | jq -r '.data[] | select(.attributes.displayName == "Coordination") | .relationships.contents.links.related.href')
+ITEM_URL=$(curl -s "$COORDINATION_CONTENTS" -H "$AUTH" | jq -r '.data[] | select(.attributes.displayName == "sample.rvt") | .links.self.href')
+TIP_URL=$(curl -s "$ITEM_URL" -H "$AUTH" | jq -r '.data.relationships.tip.links.related.href')
+MANIFEST_URL=$(curl -s "$TIP_URL" -H "$AUTH" | jq -r '.data.relationships.derivatives.meta.link.href')
+curl "$MANIFEST_URL" -H "$AUTH"
+```
+
+Folder contents supports `filter[type]`, `filter[extension.type]`, and zero-based `page[number]` with `page[limit]` up to 200. Item reads include their tip, and version histories are returned newest first.
 
 ### APS Model Coordination
 
@@ -1216,7 +1257,7 @@ Every callback includes an `x-adsk-delivery-id`. Signed callbacks also include `
 
 Retries, deactivation after five failed events, and up to five auto-reactivation trials are implemented on a compressed configurable clock. The default retry count remains eight, while millisecond timing fields let the complete lifecycle run during local and CI tests. Folder hooks match seeded descendants recursively. Filters support `$[?()]` comparisons, `in [...]`, `&&`, `||`, and an array of filters combined with AND.
 
-Current APS limits: Data Management folder, item, version, and OSS HTTP routes; write operations; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; callback URL verification; rate limits; and the real token propagation delay are not included yet.
+Current APS limits: Data Management writes, storage and OSS routes, Commands, search, and refs; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; callback URL verification; rate limits; and the real token propagation delay are not included yet.
 
 ## Apple Sign In
 

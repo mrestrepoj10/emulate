@@ -12,7 +12,7 @@ When APS is the only enabled service, it starts on `http://localhost:4000`. When
 
 ## Defaults
 
-With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, a user `testuser@autodesk.local`, one hub, two projects, one ACC project membership, sample Issues, RFIs, Sheets, two coordinated Docs models with manifests, and one successful clash test.
+With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, a user `testuser@autodesk.local`, one hub, two projects, realistic folder trees with item histories, one ACC project membership, sample Issues, RFIs, Sheets, two coordinated Docs models with manifests, and one successful clash test.
 
 ## URL Mapping
 
@@ -22,6 +22,7 @@ Real APS paths map 1:1 onto the emulator:
 | --------------------------------------------------------------- | ---------------------------------------------- |
 | `https://developer.api.autodesk.com/authentication/v2/...`      | `$APS_EMULATOR_URL/authentication/v2/...`      |
 | `https://developer.api.autodesk.com/project/v1/...`             | `$APS_EMULATOR_URL/project/v1/...`             |
+| `https://developer.api.autodesk.com/data/v1/...`                | `$APS_EMULATOR_URL/data/v1/...`                |
 | `https://developer.api.autodesk.com/modelderivative/v2/...`     | `$APS_EMULATOR_URL/modelderivative/v2/...`     |
 | `https://developer.api.autodesk.com/construction/issues/v1/...` | `$APS_EMULATOR_URL/construction/issues/v1/...` |
 | `https://developer.api.autodesk.com/construction/rfis/v3/...`   | `$APS_EMULATOR_URL/construction/rfis/v3/...`   |
@@ -45,6 +46,13 @@ Real APS paths map 1:1 onto the emulator:
 - `GET /project/v1/hubs/:hubId` — get a hub with a 3-legged token
 - `GET /project/v1/hubs/:hubId/projects` — list projects with a 3-legged token
 - `GET /project/v1/hubs/:hubId/projects/:projectId` — get a project with a 3-legged token
+- `GET /project/v1/hubs/:hubId/projects/:projectId/topFolders` — list a project's top folders
+- `GET /data/v1/projects/:projectId/folders/:folderId` — get a folder
+- `GET /data/v1/projects/:projectId/folders/:folderId/contents` — list mixed child folders and items with included tips
+- `GET /data/v1/projects/:projectId/items/:itemId` — get an item with its included tip
+- `GET /data/v1/projects/:projectId/items/:itemId/versions` — list an item's versions
+- `GET /data/v1/projects/:projectId/items/:itemId/tip` — get an item's tip version
+- `GET /data/v1/projects/:projectId/versions/:versionId` — get a version by URL-encoded URN
 - `GET /modelderivative/v2/designdata/formats` — list translation formats
 - `GET /modelderivative/v2/designdata/:urn/manifest` — get a seeded manifest
 - `GET /construction/issues/v1/projects/:projectId/users/me` — get current-user Issues permissions
@@ -82,7 +90,7 @@ Real APS paths map 1:1 onto the emulator:
 
 ## Token Behavior
 
-Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Protected routes validate the signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted. Hub, project, Issues, RFI, and Model Coordination routes require a 3-legged token. Model Derivative, Sheets, and most Webhooks routes accept either token type. `GET /webhooks/v1/app/hooks` requires a 2-legged token. Sheets supports optional `x-user-id` impersonation for 2-legged tokens.
+Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Protected routes validate the signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted. Data Management, Issues, RFI, and Model Coordination routes require a 3-legged token. Model Derivative, Sheets, and most Webhooks routes accept either token type. `GET /webhooks/v1/app/hooks` requires a 2-legged token. Sheets supports optional `x-user-id` impersonation for 2-legged tokens.
 
 ## Seed Config
 
@@ -177,12 +185,24 @@ aps:
     reactivate_after_ms: 1000
     max_reactivation_cycles: 5
     delivery_timeout_ms: 6000
+  document_folders:
+    - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      project_id: b.emulate-project
+      name: Project Files
+    - id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      project_id: b.emulate-project
+      parent_folder_id: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      name: Plans
+  document_items:
+    - id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
+      project_id: b.emulate-project
+      folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      display_name: sample.rvt
   document_versions:
     - version_id: urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
       item_id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
-      folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
-      ancestor_folder_ids: [urn:adsk.wipprod:fs.folder:co.emulate-documents]
       project_id: b.emulate-project
+      version_number: 1
       display_name: sample.rvt
   model_coordination_timing:
     processing_ms: 25
@@ -206,11 +226,11 @@ aps:
 
 Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise.
 Every project `hub_id` must match a seeded hub.
-ACC resources use the Data Management project ID in seed config. Issues, RFIs, and Model Coordination use that ID without `b.` in request paths. Sheets accepts either form.
+Folders reference parents, items reference folders, and versions reference items. Seeding validates those relationships and rejects folder cycles. Legacy version seeds with `folder_id` and `ancestor_folder_ids` remain supported. ACC resources use the Data Management project ID in seed config. Issues, RFIs, and Model Coordination use that ID without `b.` in request paths. Sheets accepts either form.
 
 ## Data API Walkthrough
 
-After obtaining a 3-legged token through the authorization code flow, list the default hub and projects:
+After obtaining a 3-legged token through the authorization code flow, follow the default project's JSON:API relationships to a translated version and its manifest:
 
 ```bash
 curl "$APS_EMULATOR_URL/project/v1/hubs" \
@@ -218,7 +238,19 @@ curl "$APS_EMULATOR_URL/project/v1/hubs" \
 
 curl "$APS_EMULATOR_URL/project/v1/hubs/b.emulate-hub/projects" \
   -H "Authorization: Bearer <3-legged-access-token>"
+
+AUTH="Authorization: Bearer <3-legged-access-token>"
+TOP_URL="$APS_EMULATOR_URL/project/v1/hubs/b.emulate-hub/projects/b.emulate-project/topFolders"
+ROOT_CONTENTS=$(curl -s "$TOP_URL" -H "$AUTH" | jq -r '.data[0].relationships.contents.links.related.href')
+PLANS_CONTENTS=$(curl -s "$ROOT_CONTENTS" -H "$AUTH" | jq -r '.data[] | select(.attributes.displayName == "Plans") | .relationships.contents.links.related.href')
+COORDINATION_CONTENTS=$(curl -s "$PLANS_CONTENTS" -H "$AUTH" | jq -r '.data[] | select(.attributes.displayName == "Coordination") | .relationships.contents.links.related.href')
+ITEM_URL=$(curl -s "$COORDINATION_CONTENTS" -H "$AUTH" | jq -r '.data[] | select(.attributes.displayName == "sample.rvt") | .links.self.href')
+TIP_URL=$(curl -s "$ITEM_URL" -H "$AUTH" | jq -r '.data.relationships.tip.links.related.href')
+MANIFEST_URL=$(curl -s "$TIP_URL" -H "$AUTH" | jq -r '.data.relationships.derivatives.meta.link.href')
+curl "$MANIFEST_URL" -H "$AUTH"
 ```
+
+Folder contents returns mixed folders and items with their tip versions in `included`. It supports `filter[type]`, `filter[extension.type]`, and zero-based `page[number]` with `page[limit]` up to 200. Version history is newest first.
 
 Formats and manifests also accept a 2-legged `data:read` token:
 
@@ -314,4 +346,4 @@ The compressed clock keeps the eight-retry policy, five-failed-event deactivatio
 
 ## Current Limits
 
-Data Management folder, item, version, and OSS HTTP routes; write operations; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; webhook callback verification; rate limits; and the real token propagation delay are not included yet.
+Data Management writes, storage and OSS routes, Commands, search, and refs; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; webhook callback verification; rate limits; and the real token propagation delay are not included yet.

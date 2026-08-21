@@ -13,6 +13,8 @@ export const DEFAULT_SECOND_MANIFEST_URN =
   "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc3RydWN0dXJhbC5ydnQ";
 export const DEFAULT_WEBHOOK_FOLDER_ID = "urn:adsk.wipprod:fs.folder:co.emulate-documents";
 export const DEFAULT_WEBHOOK_CHILD_FOLDER_ID = "urn:adsk.wipprod:fs.folder:co.emulate-plans";
+export const DEFAULT_COORDINATION_FOLDER_ID = "urn:adsk.wipprod:fs.folder:co.emulate-coordination";
+export const DEFAULT_SHARED_FOLDER_ID = "urn:adsk.wipprod:fs.folder:co.emulate-shared";
 export const DEFAULT_WEBHOOK_ITEM_ID = "urn:adsk.wipprod:dm.lineage:emulate-sample-model";
 export const DEFAULT_WEBHOOK_VERSION_ID = "urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1";
 export const DEFAULT_SECOND_DOCUMENT_ITEM_ID = "urn:adsk.wipprod:dm.lineage:emulate-structural-model";
