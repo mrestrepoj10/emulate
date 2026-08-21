@@ -1,5 +1,13 @@
 import type { ApsClientType, ApsIssuePermission, ApsManifestDerivative } from "./entities.js";
-import { DEFAULT_HUB_ID, DEFAULT_MANIFEST_URN, DEFAULT_PROJECT_ID } from "./helpers.js";
+import {
+  DEFAULT_HUB_ID,
+  DEFAULT_MANIFEST_URN,
+  DEFAULT_PROJECT_ID,
+  DEFAULT_WEBHOOK_CHILD_FOLDER_ID,
+  DEFAULT_WEBHOOK_FOLDER_ID,
+  DEFAULT_WEBHOOK_ITEM_ID,
+  DEFAULT_WEBHOOK_VERSION_ID,
+} from "./helpers.js";
 
 export interface ApsAccActorSeed {
   id: string;
@@ -180,7 +188,56 @@ export interface ApsSeedConfig {
       derivatives?: ApsManifestDerivative[];
     }
   >;
+  webhook_timing?: Partial<ApsWebhookTimingConfig>;
+  webhook_dm_versions?: Array<{
+    version_id: string;
+    item_id: string;
+    folder_id: string;
+    ancestor_folder_ids?: string[];
+    project_id: string;
+    display_name?: string;
+    storage_urn?: string;
+    region?: string;
+  }>;
+  webhooks?: Array<{
+    system: string;
+    event: string;
+    callback_url: string;
+    scope: Record<string, string>;
+    tenant?: string;
+    creator_client_id?: string;
+    creator_user_email?: string;
+    region?: string;
+    status?: "active" | "inactive";
+    auto_reactivate_hook?: boolean;
+    hook_expiry?: string | null;
+    hook_attribute?: Record<string, unknown>;
+    filter?: string | string[];
+    token?: string;
+    hub_id?: string;
+    project_id?: string;
+  }>;
 }
+
+export interface ApsWebhookTimingConfig {
+  max_retries: number;
+  retry_base_ms: number;
+  retry_max_ms: number;
+  failed_events_before_inactive: number;
+  reactivate_after_ms: number;
+  max_reactivation_cycles: number;
+  delivery_timeout_ms: number;
+}
+
+export const DEFAULT_WEBHOOK_TIMING: ApsWebhookTimingConfig = {
+  max_retries: 8,
+  retry_base_ms: 25,
+  retry_max_ms: 1000,
+  failed_events_before_inactive: 5,
+  reactivate_after_ms: 1000,
+  max_reactivation_cycles: 5,
+  delivery_timeout_ms: 6000,
+};
 
 const DEFAULT_DERIVATIVE_BASE = `urn:adsk.viewing:fs.file:${DEFAULT_MANIFEST_URN}/output`;
 const DEFAULT_ACC_TIMESTAMP = "2026-08-19T12:00:00.000Z";
@@ -401,6 +458,18 @@ export const DEFAULT_DATA_SEED = {
       updated_by: "testuser@autodesk.local",
       updated_by_name: "Test User",
       updated_at: DEFAULT_ACC_TIMESTAMP,
+    },
+  ],
+  webhook_dm_versions: [
+    {
+      version_id: DEFAULT_WEBHOOK_VERSION_ID,
+      item_id: DEFAULT_WEBHOOK_ITEM_ID,
+      folder_id: DEFAULT_WEBHOOK_CHILD_FOLDER_ID,
+      ancestor_folder_ids: [DEFAULT_WEBHOOK_FOLDER_ID],
+      project_id: DEFAULT_PROJECT_ID,
+      display_name: "sample.rvt",
+      storage_urn: "urn:adsk.objects:os.object:emulate-bucket/sample.rvt",
+      region: "US",
     },
   ],
   manifests: {

@@ -977,7 +977,7 @@ Current Twilio limits: no carrier delivery, A2P 10DLC, toll-free verification, r
 
 ## Autodesk Platform Services (APS)
 
-Autodesk Platform Services (formerly Forge) emulation with authentication v2, Data Management, Model Derivative, and core Autodesk Construction Cloud workflow reads. Every data route verifies the emulator's RS256 access tokens, expiry, revocation state, and `data:read` scope. Generic static emulator tokens are not accepted by APS data routes.
+Autodesk Platform Services (formerly Forge) emulation with authentication v2, Data Management, Model Derivative, core Autodesk Construction Cloud workflow reads, and active Webhooks delivery. Every protected route verifies the emulator's RS256 access tokens, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by APS routes.
 
 - `GET /.well-known/openid-configuration` - OIDC discovery document
 - `GET /authentication/v2/keys` - JSON Web Key Set (JWKS)
@@ -1009,6 +1009,16 @@ Autodesk Platform Services (formerly Forge) emulation with authentication v2, Da
 - `GET /construction/sheets/v1/projects/:projectId/version-sets` - list Sheet version sets
 - `GET /construction/sheets/v1/projects/:projectId/collections` - list Sheet collections
 - `GET /construction/sheets/v1/projects/:projectId/collections/:collectionId` - get a Sheet collection
+- `POST/GET /webhooks/v1/systems/:system/events/:event/hooks` - create or list event hooks
+- `GET/PATCH/DELETE /webhooks/v1/systems/:system/events/:event/hooks/:hookId` - manage one hook
+- `POST/GET /webhooks/v1/systems/:system/hooks` - create or list hooks for a system
+- `GET /webhooks/v1/hooks` - list hooks visible to the calling identity
+- `GET /webhooks/v1/app/hooks` - list hooks created by a 2-legged app
+- `POST /webhooks/v1/tokens` and `PUT/DELETE /webhooks/v1/tokens/@me` - manage signing secrets
+- `POST /_aps/simulate/event` - emit an arbitrary local APS event
+- `POST /_aps/simulate/dm-version-added` - emit from a seeded Data Management version
+- `POST /_aps/simulate/extraction-finished` - emit from a seeded manifest
+- `POST /_aps/simulate/issue-created` - emit from a seeded ACC issue
 
 Real APS paths map 1:1 onto the emulator:
 
@@ -1020,6 +1030,7 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/construction/issues/v1/...` | `$APS_EMULATOR_URL/construction/issues/v1/...` |
 | `https://developer.api.autodesk.com/construction/rfis/v3/...`   | `$APS_EMULATOR_URL/construction/rfis/v3/...`   |
 | `https://developer.api.autodesk.com/construction/sheets/v1/...` | `$APS_EMULATOR_URL/construction/sheets/v1/...` |
+| `https://developer.api.autodesk.com/webhooks/v1/...`            | `$APS_EMULATOR_URL/webhooks/v1/...`            |
 | `https://api.userprofile.autodesk.com/userinfo`                 | `$APS_EMULATOR_URL/userinfo`                   |
 
 With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, a user `testuser@autodesk.local`, one hub, two projects, one ACC project membership, sample Issues, RFIs, Sheets, and a completed manifest at `dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA`. Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Authorization codes are single use and expire after 5 minutes. Refresh tokens live for 15 days and are single use: every refresh returns a new refresh token, and replaying an already-used refresh token invalidates the whole grant family, matching real APS behavior. PKCE supports `S256` only and is required for public clients.
@@ -1107,13 +1118,62 @@ aps:
         - outputType: svf2
           status: success
           progress: complete
+  webhook_timing:
+    max_retries: 8
+    retry_base_ms: 25
+    retry_max_ms: 1000
+    failed_events_before_inactive: 5
+    reactivate_after_ms: 1000
+    max_reactivation_cycles: 5
+    delivery_timeout_ms: 6000
+  webhook_dm_versions:
+    - version_id: urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+      item_id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
+      folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      ancestor_folder_ids: [urn:adsk.wipprod:fs.folder:co.emulate-documents]
+      project_id: b.emulate-project
+      display_name: sample.rvt
+  webhooks:
+    - system: data
+      event: dm.version.added
+      callback_url: http://localhost:3000/api/webhooks/aps
+      scope:
+        folder: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      creator_client_id: aps-test-client
+      auto_reactivate_hook: true
 ```
 
 Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise.
 Every project `hub_id` must match a seeded hub.
 ACC resources use the Data Management project ID in seed config. Issues and RFIs use that ID without `b.` in request paths. Sheets accepts either form. Issues and RFIs require a 3-legged user-context token. Sheets accepts 2-legged tokens and supports optional `x-user-id` impersonation.
 
-Current APS limits: Data Management folders, items, versions, OSS, write operations, translation jobs, other Model Derivative resources, ACC Forms, Submittals, Assets, Relationships, Model Coordination, Model Properties, ACC write endpoints, and APS webhooks are not included yet.
+### APS Webhooks
+
+Webhook reads require `data:read`; writes and secret management require `data:read data:write`. Hooks are isolated by their creating app or user and by region. Region selection follows APS precedence: `region` header, `x-ads-region` header, then the `region` query parameter. Lists return at most 200 hooks per page and use opaque `pageState` cursors.
+
+```bash
+APS_URL="http://localhost:4014"
+
+curl -X POST "$APS_URL/webhooks/v1/tokens" \
+  -H "Authorization: Bearer <access-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"token":"local-signing-secret"}'
+
+curl -X POST "$APS_URL/webhooks/v1/systems/data/events/dm.version.added/hooks" \
+  -H "Authorization: Bearer <access-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"callbackUrl":"http://localhost:3000/api/webhooks/aps","scope":{"folder":"urn:adsk.wipprod:fs.folder:co.emulate-documents"},"autoReactivateHook":true}'
+
+curl -X POST "$APS_URL/_aps/simulate/dm-version-added" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Every callback includes an `x-adsk-delivery-id`. Signed callbacks also include `x-adsk-signature: sha1hash=<hex>`, computed with HMAC-SHA1 over the exact raw JSON body. A per-hook token overrides the app or user token. The generic simulator returns a per-hook report containing the callback status, attempt count, signature presence, and matching or filter drop reason.
+
+Retries, deactivation after five failed events, and up to five auto-reactivation trials are implemented on a compressed configurable clock. The default retry count remains eight, while millisecond timing fields let the complete lifecycle run during local and CI tests. Folder hooks match seeded descendants recursively. Filters support `$[?()]` comparisons, `in [...]`, `&&`, `||`, and an array of filters combined with AND.
+
+Current APS limits: Data Management folder, item, version, and OSS HTTP routes; write operations; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, Model Coordination, and Model Properties; ACC write endpoints; callback URL verification; rate limits; and the real token propagation delay are not included yet.
 
 ## Apple Sign In
 

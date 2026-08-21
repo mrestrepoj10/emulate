@@ -127,3 +127,61 @@ export interface ApsManifest extends Entity {
   version: string;
   derivatives: ApsManifestDerivative[];
 }
+
+export type ApsWebhookStatus = "active" | "inactive" | "reactivated";
+export type ApsWebhookCreatorType = "Application" | "O2User";
+export type ApsWebhookFilter = string | string[];
+
+export interface ApsWebhookHook extends Entity {
+  hook_id: string;
+  tenant: string;
+  callback_url: string;
+  created_by: string;
+  creator_type: ApsWebhookCreatorType;
+  identity_key: string;
+  event: string;
+  system: string;
+  status: ApsWebhookStatus;
+  auto_reactivate_hook: boolean;
+  hook_expiry: string | null;
+  hook_attribute: Record<string, unknown> | null;
+  filter: ApsWebhookFilter | null;
+  scope: Record<string, string>;
+  hub_id: string | null;
+  project_id: string | null;
+  token: string | null;
+  region: string;
+  failed_event_count: number;
+  inactive_at: string | null;
+  reactivation_count: number;
+}
+
+export interface ApsWebhookSecret extends Entity {
+  identity_key: string;
+  region: string;
+  token: string;
+}
+
+export interface ApsWebhookDelivery extends Entity {
+  delivery_id: string;
+  hook_id: string;
+  system: string;
+  event: string;
+  attempt: number;
+  envelope: Record<string, unknown>;
+  status_code: number | null;
+  duration: number;
+  success: boolean;
+  signature_present: boolean;
+}
+
+export interface ApsWebhookDmVersion extends Entity {
+  version_id: string;
+  item_id: string;
+  folder_id: string;
+  ancestor_folder_ids: string[];
+  project_id: string;
+  display_name: string;
+  storage_urn: string;
+  region: string;
+}

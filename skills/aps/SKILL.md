@@ -1,12 +1,12 @@
 ---
 name: aps
-description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management, Model Derivative, and Autodesk Construction Cloud workflow reads for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs and projects, supported translation formats, seeded manifests, Issues, RFIs, Sheets, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Model Derivative manifest", "ACC Issues", "ACC RFIs", "ACC Sheets", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
+description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management, Model Derivative, Autodesk Construction Cloud workflow reads, and active Webhooks for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs and projects, seeded manifests, Issues, RFIs, Sheets, webhook subscriptions, signed callback delivery, retry lifecycle testing, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Model Derivative manifest", "ACC Issues", "ACC RFIs", "ACC Sheets", "APS webhooks", "dm.version.added", "extraction.finished", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
 allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 ---
 
 # Autodesk Platform Services (APS) Emulator
 
-APS authentication v2 emulation plus Data Management, Model Derivative, and ACC Issues, RFIs, and Sheets reads. Data routes validate the emulator's own RS256 token signature, expiry, revocation state, and `data:read` scope. Generic static emulator tokens are not accepted by these routes.
+APS authentication v2 emulation plus Data Management, Model Derivative, ACC Issues, RFIs, and Sheets reads, with active Webhooks delivery and local event simulators. Protected routes validate the emulator's own RS256 token signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by these routes.
 
 ## Start
 
@@ -54,6 +54,7 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/construction/issues/v1/...`                  | `$APS_EMULATOR_URL/construction/issues/v1/...`                  |
 | `https://developer.api.autodesk.com/construction/rfis/v3/...`                    | `$APS_EMULATOR_URL/construction/rfis/v3/...`                    |
 | `https://developer.api.autodesk.com/construction/sheets/v1/...`                  | `$APS_EMULATOR_URL/construction/sheets/v1/...`                  |
+| `https://developer.api.autodesk.com/webhooks/v1/...`                             | `$APS_EMULATOR_URL/webhooks/v1/...`                             |
 | `https://developer.api.autodesk.com/.well-known/openid-configuration`            | `$APS_EMULATOR_URL/.well-known/openid-configuration`            |
 | `https://api.userprofile.autodesk.com/userinfo`                                  | `$APS_EMULATOR_URL/userinfo`                                    |
 
@@ -142,6 +143,29 @@ aps:
         - outputType: svf2
           status: success
           progress: complete
+  webhook_timing:
+    max_retries: 8
+    retry_base_ms: 25
+    retry_max_ms: 1000
+    failed_events_before_inactive: 5
+    reactivate_after_ms: 1000
+    max_reactivation_cycles: 5
+    delivery_timeout_ms: 6000
+  webhook_dm_versions:
+    - version_id: urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+      item_id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
+      folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      ancestor_folder_ids: [urn:adsk.wipprod:fs.folder:co.emulate-documents]
+      project_id: b.emulate-project
+      display_name: sample.rvt
+  webhooks:
+    - system: data
+      event: dm.version.added
+      callback_url: http://localhost:3000/api/webhooks/aps
+      scope:
+        folder: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      creator_client_id: aps-test-client
+      auto_reactivate_hook: true
 ```
 
 Client `type` is inferred when omitted: confidential when a `client_secret` is present, public otherwise. Every project `hub_id` must match a seeded hub. ACC resources use the Data Management project ID in seed config. With no config, the emulator also seeds one hub, two projects, one ACC project membership, sample workflow resources, and a completed sample manifest.
@@ -269,6 +293,51 @@ curl "$APS_URL/construction/sheets/v1/projects/emulate-project/version-sets" \
 
 Sheets provides sheet lists and batch reads, version-set lists, collection lists, and collection details. Its paginated lists include `previousUrl` and `nextUrl`.
 
+## Webhooks
+
+Use a 2-legged or 3-legged token with `data:read data:write` for hook writes and signing-secret management. Reads need `data:read`. Hooks created with a 2-legged token belong to the app; hooks created with a 3-legged token belong to that user. Region is part of the partition and follows `region` header, `x-ads-region` header, then query parameter precedence.
+
+```bash
+APS_URL="http://localhost:4014"
+ACCESS_TOKEN="<2-legged-or-3-legged-access-token>"
+
+# 1. Set the app or user signing secret
+curl -X POST "$APS_URL/webhooks/v1/tokens" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"token":"local-signing-secret"}'
+
+# 2. Subscribe recursively to a seeded folder
+curl -X POST "$APS_URL/webhooks/v1/systems/data/events/dm.version.added/hooks" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @- <<'JSON'
+{"callbackUrl":"http://localhost:3000/api/webhooks/aps","scope":{"folder":"urn:adsk.wipprod:fs.folder:co.emulate-documents"},"filter":"$[?(@.ext in ['rvt','dwg'])]"}
+JSON
+
+# 3. Deliver a callback from the seeded descendant version
+curl -X POST "$APS_URL/_aps/simulate/dm-version-added" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+The event-specific create returns `201` with an empty body and a `Location` header. Empty lists return `204`. System-wide creation fans out over the documented catalog and returns `{ "hooks": [...] }`. Lists page at 200 items through opaque `pageState` cursors. Unknown system and event strings are accepted for forward-compatible tests.
+
+Callbacks contain `{ version, resourceUrn, hook, payload }` and an `x-adsk-delivery-id` header. If a token exists, verify `x-adsk-signature` against the exact raw body:
+
+```typescript
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+const expected = `sha1hash=${createHmac("sha1", secret).update(rawBody).digest("hex")}`;
+const valid = timingSafeEqual(Buffer.from(receivedSignature), Buffer.from(expected));
+```
+
+A per-hook `token` overrides the identity secret. The generic `POST /_aps/simulate/event` route returns per-hook statuses, attempts, signature presence, and drop reasons. Convenience routes cover `dm.version.added`, `extraction.finished`, and `issue.created-1.0` from seeded state.
+
+Event matching supports exact names, `*`, `dm.*.modified`, and `*.added`; recursive folder ancestry; exact workflow/project/company scope; expiry deletion; and the documented JSONPath subset. Filters support comparisons, `in [...]`, `&&`, `||`, and arrays combined with AND.
+
+Failed callbacks retry exponentially. Five exhausted events deactivate a hook. Auto-reactivation performs one trial after the configured delay, restores the hook on success, and stops permanently after five failed cycles. `webhook_timing` compresses the real APS clock so tests finish in seconds.
+
 ## Refresh Token Flow
 
 ```bash
@@ -338,4 +407,4 @@ const { payload } = await jwtVerify(accessToken, jwks, {
 
 ## Current Limits
 
-Data Management folders, items, versions, OSS, write operations, translation jobs, other Model Derivative resources, ACC Forms, Submittals, Assets, Relationships, Model Coordination, Model Properties, ACC write endpoints, and APS webhooks are not included yet.
+Data Management folder, item, version, and OSS HTTP routes; write operations; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, Model Coordination, and Model Properties; ACC write endpoints; webhook callback verification; rate limits; and the real token propagation delay are not included yet.

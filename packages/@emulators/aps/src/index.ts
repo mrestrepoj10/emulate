@@ -18,12 +18,21 @@ import { modelDerivativeRoutes } from "./routes/model-derivative.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { rfiRoutes } from "./routes/rfis.js";
 import { sheetRoutes } from "./routes/sheets.js";
+import { simulateRoutes } from "./routes/simulate.js";
+import { webhookRoutes } from "./routes/webhooks.js";
 import { seedAccFromConfig } from "./seed-acc.js";
 import { getApsStore } from "./store.js";
+import { canonicalWebhookScope, createWebhookRecord, setWebhookTiming } from "./webhooks.js";
 
 export { getApsStore, type ApsStore } from "./store.js";
-export { DEFAULT_DATA_SEED, type ApsSeedConfig } from "./config.js";
+export {
+  DEFAULT_DATA_SEED,
+  DEFAULT_WEBHOOK_TIMING,
+  type ApsSeedConfig,
+  type ApsWebhookTimingConfig,
+} from "./config.js";
 export * from "./entities.js";
+export { getWebhookTiming, setWebhookTiming, simulateWebhookEvent, webhookDetails } from "./webhooks.js";
 
 function seedDefaults(store: Store, baseUrl: string): void {
   const aps = getApsStore(store);
@@ -117,6 +126,72 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedCo
       });
     }
   }
+
+  if (config.webhook_timing) setWebhookTiming(store, config.webhook_timing);
+
+  for (const version of config.webhook_dm_versions ?? []) {
+    if (aps.webhookDmVersions.findOneBy("version_id", version.version_id)) continue;
+    if (!aps.projects.findOneBy("project_id", version.project_id)) {
+      throw new Error(
+        `APS webhook version '${version.version_id}' references unknown project '${version.project_id}'.`,
+      );
+    }
+    aps.webhookDmVersions.insert({
+      version_id: version.version_id,
+      item_id: version.item_id,
+      folder_id: version.folder_id,
+      ancestor_folder_ids: [...(version.ancestor_folder_ids ?? [])],
+      project_id: version.project_id,
+      display_name: version.display_name ?? "model.rvt",
+      storage_urn: version.storage_urn ?? `urn:adsk.objects:os.object:emulate-bucket/${version.version_id}`,
+      region: (version.region ?? "US").toUpperCase(),
+    });
+  }
+
+  for (const hook of config.webhooks ?? []) {
+    const user = hook.creator_user_email ? aps.users.findOneBy("email", hook.creator_user_email) : undefined;
+    const clientId = hook.creator_client_id ?? DEFAULT_CONFIDENTIAL_CLIENT_ID;
+    if (hook.creator_user_email && !user) {
+      throw new Error(`APS webhook references unknown user '${hook.creator_user_email}'.`);
+    }
+    if (!user && !aps.clients.findOneBy("client_id", clientId)) {
+      throw new Error(`APS webhook references unknown client '${clientId}'.`);
+    }
+    const identity = user
+      ? { key: `user:${user.user_id}`, createdBy: user.user_id, creatorType: "O2User" as const }
+      : { key: `app:${clientId}`, createdBy: clientId, creatorType: "Application" as const };
+    const region = (hook.region ?? "US").toUpperCase();
+    const canonicalScope = canonicalWebhookScope(hook.scope);
+    const exists = aps.webhookHooks
+      .all()
+      .some(
+        (candidate) =>
+          candidate.identity_key === identity.key &&
+          candidate.region === region &&
+          candidate.system === hook.system &&
+          candidate.event === hook.event &&
+          candidate.callback_url === hook.callback_url &&
+          canonicalWebhookScope(candidate.scope) === canonicalScope,
+      );
+    if (exists) continue;
+    createWebhookRecord(aps, {
+      system: hook.system,
+      event: hook.event,
+      callbackUrl: hook.callback_url,
+      scope: hook.scope,
+      tenant: hook.tenant,
+      identity,
+      region,
+      status: hook.status,
+      autoReactivateHook: hook.auto_reactivate_hook,
+      hookExpiry: hook.hook_expiry,
+      hookAttribute: hook.hook_attribute,
+      filter: hook.filter,
+      token: hook.token,
+      hubId: hook.hub_id,
+      projectId: hook.project_id,
+    });
+  }
 }
 
 export const apsPlugin: ServicePlugin = {
@@ -129,6 +204,8 @@ export const apsPlugin: ServicePlugin = {
     issueRoutes(ctx);
     rfiRoutes(ctx);
     sheetRoutes(ctx);
+    webhookRoutes(ctx);
+    simulateRoutes(ctx);
   },
   seed(store: Store, baseUrl: string): void {
     seedDefaults(store, baseUrl);

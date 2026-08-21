@@ -232,3 +232,27 @@ aps:
         - outputType: svf2
           status: success
           progress: complete
+  webhook_timing:
+    max_retries: 8
+    retry_base_ms: 25
+    retry_max_ms: 1000
+    failed_events_before_inactive: 5
+    reactivate_after_ms: 1000
+    max_reactivation_cycles: 5
+    delivery_timeout_ms: 6000
+  webhook_dm_versions:
+    - version_id: urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+      item_id: urn:adsk.wipprod:dm.lineage:emulate-sample-model
+      folder_id: urn:adsk.wipprod:fs.folder:co.emulate-plans
+      ancestor_folder_ids:
+        - urn:adsk.wipprod:fs.folder:co.emulate-documents
+      project_id: b.emulate-project
+      display_name: sample.rvt
+  webhooks:
+    - system: data
+      event: dm.version.added
+      callback_url: http://localhost:3000/api/webhooks/aps
+      scope:
+        folder: urn:adsk.wipprod:fs.folder:co.emulate-documents
+      creator_client_id: aps-test-client
+      auto_reactivate_hook: true
