@@ -25,11 +25,10 @@ function signaturesMatch(actual: string, expected: string): boolean {
 
 export function putSignedBlob(
   aps: ApsStore,
-  input: { blobId: string; ownerId: string; filename: string; contentType: string; content: Buffer },
+  input: { blobId: string; filename: string; contentType: string; content: Buffer },
 ): void {
   const data = {
     blob_id: input.blobId,
-    owner_id: input.ownerId,
     filename: input.filename,
     content_type: input.contentType,
     content_base64: input.content.toString("base64"),

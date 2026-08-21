@@ -5,10 +5,10 @@ import {
   CLASH_RESOURCE_TYPES,
   clashResourceBlobId,
   clashTestPayload,
-  ensureClashArtifacts,
   getModelCoordinationTiming,
+  writeClashArtifacts,
 } from "../model-coordination.js";
-import { coordinationPage, coordinationProject, queryValues } from "../model-coordination-http.js";
+import { coordinationPage, coordinationProject, modelSetForProject, queryValues } from "../model-coordination-http.js";
 import { badInput, notFound, problem } from "../problem.js";
 import { issueSignedBlobUrl } from "../signed-blobs.js";
 import { getApsStore, type ApsStore } from "../store.js";
@@ -28,8 +28,8 @@ export function clashRoutes({ app, store, baseUrl }: RouteContext): void {
   app.get("/bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/tests", (c) => {
     const project = coordinationProject(c, aps);
     if (project instanceof Response) return project;
-    const modelSet = aps.modelSets.findOneBy("model_set_id", c.req.param("modelSetId"));
-    if (!modelSet || modelSet.project_id !== project.project_id) return notFound(c, "The requested model set");
+    const modelSet = modelSetForProject(c, aps, project);
+    if (modelSet instanceof Response) return modelSet;
     const statuses = queryValues(c, "status");
     const invalidStatus = statuses.find((status) => !TEST_STATUSES.includes(status));
     if (invalidStatus) return badInput(c, "status", `The value '${invalidStatus}' is not valid.`);
@@ -66,7 +66,7 @@ export function clashRoutes({ app, store, baseUrl }: RouteContext): void {
       .findBy("model_set_id", test.model_set_id)
       .find((candidate) => candidate.version === test.model_set_version);
     if (!version) return notFound(c, "The clash test model set version");
-    ensureClashArtifacts(aps, version, test);
+    writeClashArtifacts(aps, version, test);
     const ttl = getModelCoordinationTiming(store).signed_url_ttl_ms;
     const resources = CLASH_RESOURCE_TYPES.map((type) => {
       const signed = issueSignedBlobUrl(store, baseUrl, clashResourceBlobId(test.test_id, type), ttl);

@@ -7,12 +7,7 @@ import {
   jsonObjectBody,
   optionalString,
 } from "../helpers.js";
-import {
-  addModelSetVersion,
-  clashTestPayload,
-  modelSetVersionPayload,
-  setModelCoordinationTiming,
-} from "../model-coordination.js";
+import { addModelSetVersion, clashTestPayload, modelSetVersionPayload } from "../model-coordination.js";
 import { getApsStore } from "../store.js";
 import { parseWebhookRegion } from "../webhook-events.js";
 import { simulateWebhookEvent } from "../webhooks.js";
@@ -39,13 +34,14 @@ export function simulateRoutes({ app, store }: RouteContext): void {
       ? aps.modelSets.findOneBy("model_set_id", requestedModelSetId)
       : aps.modelSets.all()[0];
     if (!modelSet) return simulatorError(c, "The seeded model set was not found.", 404);
-    if (body.processingMs !== undefined) {
-      if (typeof body.processingMs !== "number" || !Number.isFinite(body.processingMs) || body.processingMs < 0) {
-        return simulatorError(c, "processingMs must be a non-negative number.");
-      }
-      setModelCoordinationTiming(store, { processing_ms: body.processingMs });
+    const processingMs = body.processingMs;
+    if (
+      processingMs !== undefined &&
+      (typeof processingMs !== "number" || !Number.isFinite(processingMs) || processingMs < 0)
+    ) {
+      return simulatorError(c, "processingMs must be a non-negative number.");
     }
-    const result = addModelSetVersion(aps, store, modelSet);
+    const result = addModelSetVersion(aps, store, modelSet, { processingMs });
     return c.json({
       modelSetVersion: modelSetVersionPayload(result.version),
       clashTest: clashTestPayload(result.test),

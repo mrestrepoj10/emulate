@@ -14,6 +14,7 @@ import type {
   ApsModelSetVersion,
 } from "./entities.js";
 import { bareProjectId } from "./acc.js";
+import { DEFAULT_USER_EMAIL } from "./helpers.js";
 import { putSignedBlob } from "./signed-blobs.js";
 import type { ApsStore } from "./store.js";
 
@@ -25,6 +26,15 @@ export const CLASH_RESOURCE_TYPES = [
   "scope-version-clash-instance.2.0.0",
   "scope-version-document.2.0.0",
 ] as const;
+
+// The seeded clash groups derive their existing/resolved ids from this fixture.
+const CANNED_CLASHES = [
+  { id: 1, clash: [0, 1], dist: 0.125, status: "New" },
+  { id: 2, clash: [0, 1], dist: 0.25, status: "Existing" },
+  { id: 3, clash: [0, 1], dist: 0.5, status: "Resolved" },
+];
+const RESOLVED_CLASH_IDS = CANNED_CLASHES.filter((clash) => clash.status === "Resolved").map((clash) => clash.id);
+const UNRESOLVED_CLASH_IDS = CANNED_CLASHES.filter((clash) => clash.status !== "Resolved").map((clash) => clash.id);
 
 export function getModelCoordinationTiming(store: Store): ApsModelCoordinationTimingConfig {
   return store.getData<ApsModelCoordinationTimingConfig>(TIMING_KEY) ?? { ...DEFAULT_MODEL_COORDINATION_TIMING };
@@ -68,7 +78,7 @@ function modelSetDocument(version: ApsDocumentVersion, createTime: string): ApsM
     displayName: version.display_name,
     revision: "1",
     viewableName: "{3D}",
-    createUserId: "testuser@autodesk.local",
+    createUserId: DEFAULT_USER_EMAIL,
     createTime,
     viewableGuid: version.viewable_guid,
     viewableId: version.viewable_id,
@@ -81,7 +91,7 @@ function modelSetDocument(version: ApsDocumentVersion, createTime: string): ApsM
   };
 }
 
-export function clashTestPayload(test: ApsClashTest): Record<string, unknown> {
+export function clashTestPayload(test: ApsClashTest) {
   return {
     id: test.test_id,
     ...(test.completed_on ? { completedOn: test.completed_on } : {}),
@@ -91,7 +101,7 @@ export function clashTestPayload(test: ApsClashTest): Record<string, unknown> {
   };
 }
 
-export function modelSetVersionPayload(version: ApsModelSetVersion): Record<string, unknown> {
+export function modelSetVersionPayload(version: ApsModelSetVersion) {
   return {
     modelSetId: version.model_set_id,
     version: version.version,
@@ -101,7 +111,7 @@ export function modelSetVersionPayload(version: ApsModelSetVersion): Record<stri
   };
 }
 
-export function modelSetSummaryPayload(modelSet: ApsModelSet): Record<string, unknown> {
+export function modelSetSummaryPayload(modelSet: ApsModelSet) {
   return {
     modifiedBy: modelSet.modified_by,
     modifiedTime: modelSet.modified_time,
@@ -121,10 +131,12 @@ export function modelSetSummaryPayload(modelSet: ApsModelSet): Record<string, un
   };
 }
 
-export function modelSetPayload(aps: ApsStore, modelSet: ApsModelSet): Record<string, unknown> {
-  const versions = aps.modelSetVersions
-    .findBy("model_set_id", modelSet.model_set_id)
-    .sort((left, right) => right.version - left.version);
+export function latestModelSetVersion(aps: ApsStore, modelSetId: string): ApsModelSetVersion | undefined {
+  return aps.modelSetVersions.findBy("model_set_id", modelSetId).sort((left, right) => right.version - left.version)[0];
+}
+
+export function modelSetPayload(aps: ApsStore, modelSet: ApsModelSet) {
+  const tipVersion = latestModelSetVersion(aps, modelSet.model_set_id)?.version ?? 0;
   return {
     ...modelSetSummaryPayload(modelSet),
     modelSetType: "ProjectFiles",
@@ -136,25 +148,20 @@ export function modelSetPayload(aps: ApsStore, modelSet: ApsModelSet): Record<st
     })),
     accessedTime: modelSet.modified_time,
     isInactive: false,
-    tipVersion: versions[0]?.version ?? 0,
+    tipVersion,
     permission: "Edit",
     contentFilters: [],
-    checksum: checksum(`${modelSet.model_set_id}:${versions[0]?.version ?? 0}`),
+    checksum: checksum(`${modelSet.model_set_id}:${tipVersion}`),
   };
 }
 
-function artifactBlobId(testId: string, type: string): string {
+export function clashResourceBlobId(testId: string, type: string): string {
   return `${testId}.${type}`;
 }
 
-export function ensureClashArtifacts(aps: ApsStore, version: ApsModelSetVersion, test: ApsClashTest): void {
+export function writeClashArtifacts(aps: ApsStore, version: ApsModelSetVersion, test: ApsClashTest): void {
   const documents = version.document_versions.map((document, id) => ({ id, urn: document.versionUrn }));
-  const clashes = [
-    { id: 1, clash: [0, 1], dist: 0.125, status: "New" },
-    { id: 2, clash: [0, 1], dist: 0.25, status: "Existing" },
-    { id: 3, clash: [0, 1], dist: 0.5, status: "Resolved" },
-  ];
-  const instances = clashes.map((clash, index) => ({
+  const instances = CANNED_CLASHES.map((clash, index) => ({
     cid: clash.id,
     ldid: 0,
     loid: 1001 + index,
@@ -164,15 +171,14 @@ export function ensureClashArtifacts(aps: ApsStore, version: ApsModelSetVersion,
     rvid: 1,
   }));
   const values: Record<(typeof CLASH_RESOURCE_TYPES)[number], unknown> = {
-    "scope-version-clash.2.0.0": clashes,
+    "scope-version-clash.2.0.0": CANNED_CLASHES,
     "scope-version-clash-instance.2.0.0": instances,
     "scope-version-document.2.0.0": documents,
   };
 
   for (const type of CLASH_RESOURCE_TYPES) {
     putSignedBlob(aps, {
-      blobId: artifactBlobId(test.test_id, type),
-      ownerId: test.test_id,
+      blobId: clashResourceBlobId(test.test_id, type),
       filename: `${type}.json.gz`,
       contentType: "application/gzip",
       content: gzipSync(JSON.stringify(values[type])),
@@ -180,7 +186,7 @@ export function ensureClashArtifacts(aps: ApsStore, version: ApsModelSetVersion,
   }
 }
 
-function seedTestAndArtifacts(aps: ApsStore, modelSet: ApsModelSet, version: ApsModelSetVersion, testId: string): void {
+function seedClashTest(aps: ApsStore, modelSet: ApsModelSet, version: ApsModelSetVersion, testId: string): void {
   const test = aps.clashTests.insert({
     project_id: modelSet.project_id,
     test_id: testId,
@@ -189,15 +195,14 @@ function seedTestAndArtifacts(aps: ApsStore, modelSet: ApsModelSet, version: Aps
     status: "Success",
     completed_on: version.create_time,
   });
-  ensureClashArtifacts(aps, version, test);
   aps.clashGroups.insert({
     test_id: test.test_id,
     disposition: "assigned",
     group_id: "17171717-1717-4171-8171-171717171717",
     original_clash_test_id: test.test_id,
     created_at_version: version.version,
-    existing: [1, 2],
-    resolved: [3],
+    existing: [...UNRESOLVED_CLASH_IDS],
+    resolved: [...RESOLVED_CLASH_IDS],
   });
   aps.clashGroups.insert({
     test_id: test.test_id,
@@ -206,7 +211,7 @@ function seedTestAndArtifacts(aps: ApsStore, modelSet: ApsModelSet, version: Aps
     original_clash_test_id: test.test_id,
     created_at_version: version.version,
     existing: [],
-    resolved: [3],
+    resolved: [...RESOLVED_CLASH_IDS],
   });
 }
 
@@ -232,7 +237,7 @@ export function seedModelCoordinationFromConfig(aps: ApsStore, store: Store, con
     if (documents.length < 2) throw new Error(`APS model set '${seed.id}' requires at least two document versions.`);
 
     const createdTime = seed.created_time ?? new Date().toISOString();
-    const actor = seed.created_by ?? "testuser@autodesk.local";
+    const actor = seed.created_by ?? DEFAULT_USER_EMAIL;
     const modelSet = aps.modelSets.insert({
       project_id: project.project_id,
       model_set_id: seed.id,
@@ -260,7 +265,7 @@ export function seedModelCoordinationFromConfig(aps: ApsStore, store: Store, con
       view_id: "19191919-1919-4191-8191-191919191919",
       document_versions: version.document_versions.map((document) => document.versionUrn),
     });
-    seedTestAndArtifacts(aps, modelSet, version, seed.test_id ?? randomUUID());
+    seedClashTest(aps, modelSet, version, seed.test_id ?? randomUUID());
   }
 }
 
@@ -268,10 +273,9 @@ export function addModelSetVersion(
   aps: ApsStore,
   store: Store,
   modelSet: ApsModelSet,
+  overrides?: { processingMs?: number },
 ): { version: ApsModelSetVersion; test: ApsClashTest } {
-  const previous = aps.modelSetVersions
-    .findBy("model_set_id", modelSet.model_set_id)
-    .sort((left, right) => right.version - left.version)[0];
+  const previous = latestModelSetVersion(aps, modelSet.model_set_id);
   if (!previous) throw new Error(`APS model set '${modelSet.model_set_id}' has no source version.`);
   const createTime = new Date().toISOString();
   const version = aps.modelSetVersions.insert({
@@ -297,21 +301,15 @@ export function addModelSetVersion(
   });
   aps.modelSets.update(modelSet.id, { modified_time: createTime });
 
-  const { processing_ms: processingMs } = getModelCoordinationTiming(store);
+  const processingMs = overrides?.processingMs ?? getModelCoordinationTiming(store).processing_ms;
   setTimeout(() => {
     aps.modelSetVersions.update(version.id, { status: "Processing" });
     aps.clashTests.update(test.id, { status: "Processing" });
+    setTimeout(() => {
+      aps.modelSetVersions.update(version.id, { status: "Successful" });
+      aps.clashTests.update(test.id, { status: "Success", completed_on: new Date().toISOString() });
+    }, processingMs);
   }, processingMs);
-  setTimeout(() => {
-    const completedOn = new Date().toISOString();
-    const completeVersion = aps.modelSetVersions.update(version.id, { status: "Successful" });
-    const completeTest = aps.clashTests.update(test.id, { status: "Success", completed_on: completedOn });
-    if (completeVersion && completeTest) ensureClashArtifacts(aps, completeVersion, completeTest);
-  }, processingMs * 2);
 
   return { version, test };
-}
-
-export function clashResourceBlobId(testId: string, type: string): string {
-  return artifactBlobId(testId, type);
 }

@@ -78,6 +78,6 @@ export function getApsStore(store: Store): ApsStore {
     modelSetViews: store.collection<ApsModelSetView>("aps.modelSetViews", ["model_set_id", "version"]),
     clashTests: store.collection<ApsClashTest>("aps.clashTests", ["project_id", "test_id", "model_set_id"]),
     clashGroups: store.collection<ApsClashGroup>("aps.clashGroups", ["test_id", "disposition"]),
-    signedBlobs: store.collection<ApsSignedBlob>("aps.signedBlobs", ["blob_id", "owner_id"]),
+    signedBlobs: store.collection<ApsSignedBlob>("aps.signedBlobs", ["blob_id"]),
   };
 }

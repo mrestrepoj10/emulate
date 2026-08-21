@@ -1,6 +1,6 @@
 import type { AppEnv, Context } from "@emulators/core";
-import { projectForAccId } from "./acc.js";
-import type { ApsProject } from "./entities.js";
+import { commaSeparated, projectForAccId } from "./acc.js";
+import type { ApsModelSet, ApsProject } from "./entities.js";
 import { badInput, notFound } from "./problem.js";
 import type { ApsStore } from "./store.js";
 
@@ -12,6 +12,12 @@ export function coordinationProject(c: Context<AppEnv>, aps: ApsStore): ApsProje
   }
   if (result.kind === "missing") return notFound(c, "The requested container");
   return result.project;
+}
+
+export function modelSetForProject(c: Context<AppEnv>, aps: ApsStore, project: ApsProject): ApsModelSet | Response {
+  const modelSet = aps.modelSets.findOneBy("model_set_id", c.req.param("modelSetId"));
+  if (!modelSet || modelSet.project_id !== project.project_id) return notFound(c, "The requested model set");
+  return modelSet;
 }
 
 function continuationToken(offset: number): string {
@@ -58,9 +64,5 @@ export function booleanQuery(c: Context<AppEnv>, name: string, fallback: boolean
 }
 
 export function queryValues(c: Context<AppEnv>, name: string): string[] {
-  return new URL(c.req.url).searchParams
-    .getAll(name)
-    .flatMap((value) => value.split(","))
-    .map((value) => value.trim())
-    .filter(Boolean);
+  return (c.req.queries(name) ?? []).flatMap(commaSeparated);
 }

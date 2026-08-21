@@ -1,18 +1,23 @@
 import type { AppEnv, Context, RouteContext } from "@emulators/core";
 import { apsAuth } from "../auth.js";
-import type { ApsModelSet, ApsModelSetVersion, ApsProject } from "../entities.js";
-import { modelSetPayload, modelSetSummaryPayload, modelSetVersionPayload } from "../model-coordination.js";
-import { booleanQuery, coordinationPage, coordinationProject, queryValues } from "../model-coordination-http.js";
+import type { ApsModelSet, ApsModelSetVersion } from "../entities.js";
+import {
+  latestModelSetVersion,
+  modelSetPayload,
+  modelSetSummaryPayload,
+  modelSetVersionPayload,
+} from "../model-coordination.js";
+import {
+  booleanQuery,
+  coordinationPage,
+  coordinationProject,
+  modelSetForProject,
+  queryValues,
+} from "../model-coordination-http.js";
 import { badInput, notFound } from "../problem.js";
 import { getApsStore, type ApsStore } from "../store.js";
 
 const VERSION_STATUSES = ["Pending", "Processing", "Successful", "Partial", "Failed"];
-
-function modelSetForProject(c: Context<AppEnv>, aps: ApsStore, project: ApsProject): ApsModelSet | Response {
-  const modelSet = aps.modelSets.findOneBy("model_set_id", c.req.param("modelSetId"));
-  if (!modelSet || modelSet.project_id !== project.project_id) return notFound(c, "The requested model set");
-  return modelSet;
-}
 
 function versionForModelSet(
   c: Context<AppEnv>,
@@ -95,9 +100,7 @@ export function modelSetRoutes({ app, store }: RouteContext): void {
     if (project instanceof Response) return project;
     const modelSet = modelSetForProject(c, aps, project);
     if (modelSet instanceof Response) return modelSet;
-    const version = aps.modelSetVersions
-      .findBy("model_set_id", modelSet.model_set_id)
-      .sort((left, right) => right.version - left.version)[0];
+    const version = latestModelSetVersion(aps, modelSet.model_set_id);
     return version ? c.json(modelSetVersionPayload(version)) : notFound(c, "The requested model set version");
   });
 

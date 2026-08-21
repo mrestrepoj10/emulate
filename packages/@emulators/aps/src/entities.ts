@@ -277,7 +277,6 @@ export interface ApsClashGroup extends Entity {
 
 export interface ApsSignedBlob extends Entity {
   blob_id: string;
-  owner_id: string;
   filename: string;
   content_type: string;
   content_base64: string;
