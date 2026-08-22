@@ -22,6 +22,9 @@ import type {
   ApsSheetCollection,
   ApsSheetVersionSet,
   ApsSignedBlob,
+  ApsStorageObject,
+  ApsTranslationJob,
+  ApsUploadSession,
   ApsUser,
   ApsWebhookDelivery,
   ApsWebhookHook,
@@ -49,6 +52,9 @@ export interface ApsStore {
   documentFolders: Collection<ApsDocumentFolder>;
   documentItems: Collection<ApsDocumentItem>;
   documentVersions: Collection<ApsDocumentVersion>;
+  storageObjects: Collection<ApsStorageObject>;
+  uploadSessions: Collection<ApsUploadSession>;
+  translationJobs: Collection<ApsTranslationJob>;
   modelSets: Collection<ApsModelSet>;
   modelSetVersions: Collection<ApsModelSetVersion>;
   modelSetViews: Collection<ApsModelSetView>;
@@ -83,6 +89,19 @@ export function getApsStore(store: Store): ApsStore {
     ]),
     documentItems: store.collection<ApsDocumentItem>("aps.documentItems", ["item_id", "project_id", "folder_id"]),
     documentVersions: store.collection<ApsDocumentVersion>("aps.documentVersions", ["version_id", "item_id"]),
+    storageObjects: store.collection<ApsStorageObject>("aps.storageObjects", [
+      "object_id",
+      "bucket_key",
+      "object_key",
+      "project_id",
+      "folder_id",
+    ]),
+    uploadSessions: store.collection<ApsUploadSession>("aps.uploadSessions", [
+      "upload_key",
+      "bucket_key",
+      "object_key",
+    ]),
+    translationJobs: store.collection<ApsTranslationJob>("aps.translationJobs", ["urn", "status"]),
     modelSets: store.collection<ApsModelSet>("aps.modelSets", ["project_id", "model_set_id"]),
     modelSetVersions: store.collection<ApsModelSetVersion>("aps.modelSetVersions", ["model_set_id", "version"]),
     modelSetViews: store.collection<ApsModelSetView>("aps.modelSetViews", ["model_set_id", "version"]),

@@ -655,7 +655,8 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
 
   aps: {
     label: "Autodesk Platform Services (APS) emulator",
-    endpoints: "OAuth, userinfo, hubs, projects, Model Derivative, Issues, RFIs, Sheets, Webhooks, and simulators",
+    endpoints:
+      "OAuth, userinfo, Data Management reads and uploads, Model Derivative jobs, ACC APIs, Webhooks, and simulators",
     async load() {
       const mod = await import("@emulators/aps");
       return { plugin: mod.apsPlugin, seedFromConfig: mod.seedFromConfig };
@@ -769,6 +770,12 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
             region: "US",
             derivatives: [{ outputType: "svf2", status: "success", progress: "complete" }],
           },
+        },
+        upload: { maxObjectBytes: 26214400 },
+        translation: {
+          autoTranslateOnVersionAdd: true,
+          durationMs: 15000,
+          failForExtensions: ["zip"],
         },
         document_folders: [
           {

@@ -19,6 +19,7 @@ import {
   splitName,
 } from "./helpers.js";
 import { dataManagementRoutes } from "./routes/data-management.js";
+import { ingestionRoutes } from "./routes/ingestion.js";
 import { clashRoutes } from "./routes/clash.js";
 import { issueRoutes } from "./routes/issues.js";
 import { modelDerivativeRoutes } from "./routes/model-derivative.js";
@@ -31,6 +32,7 @@ import { webhookRoutes } from "./routes/webhooks.js";
 import { seedAccFromConfig } from "./seed-acc.js";
 import { signedBlobRoutes } from "./signed-blobs.js";
 import { getApsStore } from "./store.js";
+import { setTranslationConfig, setUploadConfig } from "./ingestion-config.js";
 import {
   appIdentity,
   createWebhookRecord,
@@ -43,6 +45,8 @@ import {
 export { getApsStore, type ApsStore } from "./store.js";
 export {
   DEFAULT_DATA_SEED,
+  DEFAULT_TRANSLATION_CONFIG,
+  DEFAULT_UPLOAD_CONFIG,
   DEFAULT_MODEL_COORDINATION_TIMING,
   DEFAULT_WEBHOOK_TIMING,
   type ApsDocumentVersionSeed,
@@ -50,9 +54,12 @@ export {
   type ApsDocumentItemSeed,
   type ApsModelCoordinationTimingConfig,
   type ApsSeedConfig,
+  type ApsTranslationConfig,
+  type ApsUploadConfig,
   type ApsWebhookTimingConfig,
 } from "./config.js";
 export * from "./entities.js";
+export { getTranslationConfig, getUploadConfig, setTranslationConfig, setUploadConfig } from "./ingestion-config.js";
 export { getModelCoordinationTiming, setModelCoordinationTiming };
 export { getWebhookTiming, setWebhookTiming, simulateWebhookEvent, webhookDetails } from "./webhooks.js";
 
@@ -150,6 +157,8 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedCo
   }
 
   if (config.webhook_timing) setWebhookTiming(store, config.webhook_timing);
+  if (config.upload) setUploadConfig(store, config.upload);
+  if (config.translation) setTranslationConfig(store, config.translation);
 
   seedDocumentTreeFromConfig(aps, config);
 
@@ -192,6 +201,7 @@ export const apsPlugin: ServicePlugin = {
     const ctx: RouteContext = { app, store, webhooks, baseUrl, tokenMap };
     oauthRoutes(ctx);
     dataManagementRoutes(ctx);
+    ingestionRoutes(ctx);
     modelDerivativeRoutes(ctx);
     modelSetRoutes(ctx);
     clashRoutes(ctx);

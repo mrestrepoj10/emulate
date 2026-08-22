@@ -1,6 +1,6 @@
 # Autodesk Platform Services (APS)
 
-Autodesk Platform Services (formerly Forge) emulation with authentication v2, Data Management, Model Derivative, Autodesk Construction Cloud Issues, RFIs, Sheets, and Model Coordination reads, plus active Webhooks delivery and local event simulation.
+Autodesk Platform Services (formerly Forge) emulation with authentication v2, Data Management reads and uploads, simulated Model Derivative translation, Autodesk Construction Cloud Issues, RFIs, Sheets, and Model Coordination reads, plus active Webhooks delivery and local event simulation.
 
 ## Start
 
@@ -23,6 +23,7 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/authentication/v2/...`      | `$APS_EMULATOR_URL/authentication/v2/...`      |
 | `https://developer.api.autodesk.com/project/v1/...`             | `$APS_EMULATOR_URL/project/v1/...`             |
 | `https://developer.api.autodesk.com/data/v1/...`                | `$APS_EMULATOR_URL/data/v1/...`                |
+| `https://developer.api.autodesk.com/oss/v2/...`                 | `$APS_EMULATOR_URL/oss/v2/...`                 |
 | `https://developer.api.autodesk.com/modelderivative/v2/...`     | `$APS_EMULATOR_URL/modelderivative/v2/...`     |
 | `https://developer.api.autodesk.com/construction/issues/v1/...` | `$APS_EMULATOR_URL/construction/issues/v1/...` |
 | `https://developer.api.autodesk.com/construction/rfis/v3/...`   | `$APS_EMULATOR_URL/construction/rfis/v3/...`   |
@@ -53,8 +54,14 @@ Real APS paths map 1:1 onto the emulator:
 - `GET /data/v1/projects/:projectId/items/:itemId/versions` — list an item's versions
 - `GET /data/v1/projects/:projectId/items/:itemId/tip` — get an item's tip version
 - `GET /data/v1/projects/:projectId/versions/:versionId` — get a version by URL-encoded URN
+- `POST /data/v1/projects/:projectId/storage` — allocate project storage for an upload
+- `GET/POST /oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload` — issue and complete signed upload URLs
+- `PUT /oss/v2/signed-upload/:uploadKey/:part` — upload raw bytes using only the signed URL
+- `POST /data/v1/projects/:projectId/items` — create an item and its first version
+- `POST /data/v1/projects/:projectId/versions` — add the next version to an item
 - `GET /modelderivative/v2/designdata/formats` — list translation formats
-- `GET /modelderivative/v2/designdata/:urn/manifest` — get a seeded manifest
+- `POST /modelderivative/v2/designdata/job` — start or force a simulated translation job
+- `GET /modelderivative/v2/designdata/:urn/manifest` — get a seeded or live translation manifest
 - `GET /construction/issues/v1/projects/:projectId/users/me` — get current-user Issues permissions
 - `GET /construction/issues/v1/projects/:projectId/issue-types` — list issue types
 - `GET /construction/issues/v1/projects/:projectId/issues` — list and filter issues
@@ -85,12 +92,15 @@ Real APS paths map 1:1 onto the emulator:
 - `POST /_aps/simulate/event` — emit an arbitrary local event
 - `POST /_aps/simulate/dm-version-added` — emit from a seeded Data Management version
 - `POST /_aps/simulate/extraction-finished` — emit from a seeded manifest
+- `POST /_aps/simulate/translation-complete` — finish a live translation job and emit its terminal webhook
 - `POST /_aps/simulate/issue-created` — emit from a seeded ACC issue
 - `POST /_aps/simulate/modelset-version-added` — add a model set version and run its clash test
 
 ## Token Behavior
 
-Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Protected routes validate the signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted. Data Management, Issues, RFI, and Model Coordination routes require a 3-legged token. Model Derivative, Sheets, and most Webhooks routes accept either token type. `GET /webhooks/v1/app/hooks` requires a 2-legged token. Sheets supports optional `x-user-id` impersonation for 2-legged tokens.
+Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Protected routes validate the signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted. Data Management reads require a 3-legged `data:read` token. Storage, item, and version writes require a 3-legged token with `data:create data:write`. Signed upload targets use only their expiring URL signature. Model Derivative jobs require `data:create data:write`, while format and manifest reads require `data:read` and accept either token type.
+
+Uploaded bytes stay in memory and reset with the emulator. The default object cap is 25 MB. Creating a version automatically enqueues a timer-free translation job whose manifest advances lazily from `pending` through `inprogress` to a terminal state. Version creation emits `dm.version.added`; the first observation of a terminal translation emits `extraction.finished`. Successful manifests contain a plausible derivatives tree, but the emulator never serves viewable geometry.
 
 ## Seed Config
 
@@ -185,6 +195,12 @@ aps:
     reactivate_after_ms: 1000
     max_reactivation_cycles: 5
     delivery_timeout_ms: 6000
+  upload:
+    maxObjectBytes: 26214400
+  translation:
+    autoTranslateOnVersionAdd: true
+    durationMs: 15000
+    failForExtensions: [zip]
   document_folders:
     - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
       project_id: b.emulate-project
@@ -251,6 +267,8 @@ curl "$MANIFEST_URL" -H "$AUTH"
 ```
 
 Folder contents returns mixed folders and items with their tip versions in `included`. It supports `filter[type]`, `filter[extension.type]`, and zero-based `page[number]` with `page[limit]` up to 200. Version history is newest first.
+
+The supported upload path is project storage followed by `signeds3upload`, signed part PUTs, upload completion, and then item or version creation. Direct deprecated OSS object PUTs, multipart resume and abort, downloads, metadata, properties, and geometry are intentionally outside this emulator surface.
 
 Formats and manifests also accept a 2-legged `data:read` token:
 

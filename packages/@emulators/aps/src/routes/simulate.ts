@@ -1,6 +1,6 @@
 import type { AppEnv, Context, RouteContext } from "@emulators/core";
 import { bareProjectId } from "../acc.js";
-import { documentItemForVersion, folderAncestors } from "../dm-tree.js";
+import { documentVersionAddedEvent } from "../dm-events.js";
 import {
   DEFAULT_MANIFEST_URN,
   DEFAULT_PROJECT_ID,
@@ -10,6 +10,7 @@ import {
 } from "../helpers.js";
 import { addModelSetVersion, clashTestPayload, modelSetVersionPayload } from "../model-coordination.js";
 import { getApsStore } from "../store.js";
+import { forceTranslationTerminal, manifestForJob } from "../translation.js";
 import { parseWebhookRegion } from "../webhook-events.js";
 import { simulateWebhookEvent } from "../webhooks.js";
 
@@ -91,41 +92,9 @@ export function simulateRoutes({ app, store }: RouteContext): void {
       ? aps.documentVersions.findOneBy("version_id", requestedVersionId)
       : aps.documentVersions.all()[0];
     if (!version) return simulatorError(c, "The seeded Data Management version was not found.", 404);
-    const item = documentItemForVersion(aps, version);
-    if (!item) return simulatorError(c, "The seeded Data Management item was not found.", 404);
-    const folder = aps.documentFolders.findOneBy("folder_id", item.folder_id);
-    if (!folder) return simulatorError(c, "The seeded Data Management folder was not found.", 404);
-    const ancestors = folderAncestors(aps, version.project_id, folder.folder_id);
-    const projectId = bareProjectId(version.project_id);
-    const payload = {
-      ext: version.file_type,
-      modifiedTime: version.last_modified_time,
-      creator: version.created_by,
-      lineageUrn: version.item_id,
-      sizeInBytes: version.storage_size,
-      hidden: item.hidden,
-      indexable: true,
-      project: projectId,
-      source: version.version_id,
-      version: String(version.version_number),
-      user_info: { id: version.created_by },
-      name: version.display_name,
-      createdTime: version.create_time,
-      modifiedBy: version.last_modified_by,
-      state: "CONTENT_AVAILABLE",
-      parentFolderUrn: folder.folder_id,
-      ancestors: [...ancestors, folder].map((ancestor) => ({ urn: ancestor.folder_id, name: ancestor.name })),
-      tenant: projectId,
-    };
-    const report = await simulateWebhookEvent(aps, store, {
-      system: "data",
-      event: "dm.version.added",
-      resourceUrn: version.version_id,
-      region: version.region,
-      scope: { folder: folder.folder_id, project: version.project_id },
-      folderAncestors: ancestors.map((ancestor) => ancestor.folder_id),
-      payload,
-    });
+    const event = documentVersionAddedEvent(aps, version);
+    if (!event) return simulatorError(c, "The seeded Data Management item or folder was not found.", 404);
+    const report = await simulateWebhookEvent(aps, store, event);
     return c.json(report);
   });
 
@@ -155,6 +124,21 @@ export function simulateRoutes({ app, store }: RouteContext): void {
       payload,
     });
     return c.json(report);
+  });
+
+  app.post("/_aps/simulate/translation-complete", async (c) => {
+    const body = await jsonObjectBody(c);
+    if (!body) return simulatorError(c, "The request body must be a JSON object.");
+    const urn = optionalString(body.urn);
+    const status = optionalString(body.status) ?? "success";
+    if (!urn) return simulatorError(c, "urn is required.");
+    if (status !== "success" && status !== "failed") {
+      return simulatorError(c, "status must be success or failed.");
+    }
+    const job = aps.translationJobs.findOneBy("urn", urn);
+    if (!job) return simulatorError(c, "The translation job was not found.", 404);
+    const completed = await forceTranslationTerminal(aps, store, job, status);
+    return c.json(manifestForJob(completed));
   });
 
   app.post("/_aps/simulate/issue-created", async (c) => {

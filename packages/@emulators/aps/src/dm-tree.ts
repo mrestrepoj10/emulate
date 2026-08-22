@@ -1,3 +1,4 @@
+import type { InsertInput } from "@emulators/core";
 import type { ApsDocumentFolderSeed, ApsSeedConfig } from "./config.js";
 import type { ApsDocumentFolder, ApsDocumentItem, ApsDocumentVersion } from "./entities.js";
 import { DEFAULT_MANIFEST_URN, DEFAULT_USER_EMAIL } from "./helpers.js";
@@ -14,12 +15,12 @@ function projectFolderId(projectId: string): string {
   return `urn:adsk.wipprod:fs.folder:co.${Buffer.from(projectId).toString("base64url")}`;
 }
 
-function fileType(displayName: string): string {
+export function documentFileType(displayName: string): string {
   const separator = displayName.lastIndexOf(".");
   return separator < 0 ? "" : displayName.slice(separator + 1).toLowerCase();
 }
 
-function mimeType(extension: string): string {
+export function documentMimeType(extension: string): string {
   switch (extension) {
     case "dwg":
       return "application/acad";
@@ -30,6 +31,50 @@ function mimeType(extension: string): string {
     default:
       return "application/octet-stream";
   }
+}
+
+export function createDocumentItem(aps: ApsStore, data: InsertInput<ApsDocumentItem>): ApsDocumentItem {
+  const folder = aps.documentFolders.findOneBy("folder_id", data.folder_id);
+  if (!folder || folder.project_id !== data.project_id) {
+    throw new Error(`APS document item '${data.item_id}' references unknown folder '${data.folder_id}'.`);
+  }
+  if (aps.documentItems.findOneBy("item_id", data.item_id)) {
+    throw new Error(`APS document item '${data.item_id}' already exists.`);
+  }
+  return aps.documentItems.insert(data);
+}
+
+export function createDocumentVersion(
+  aps: ApsStore,
+  data: InsertInput<ApsDocumentVersion>,
+  options: { requireDerivative?: boolean } = {},
+): ApsDocumentVersion {
+  const item = aps.documentItems.findOneBy("item_id", data.item_id);
+  if (!item || item.project_id !== data.project_id) {
+    throw new Error(`APS document version '${data.version_id}' references unknown item '${data.item_id}'.`);
+  }
+  if (!Number.isInteger(data.version_number) || data.version_number < 1) {
+    throw new Error(`APS document version '${data.version_id}' must have a positive integer version number.`);
+  }
+  if (aps.documentVersions.findOneBy("version_id", data.version_id)) {
+    throw new Error(`APS document version '${data.version_id}' already exists.`);
+  }
+  if (
+    aps.documentVersions
+      .findBy("item_id", data.item_id)
+      .some((version) => version.version_number === data.version_number)
+  ) {
+    throw new Error(`APS document item '${data.item_id}' has more than one version numbered ${data.version_number}.`);
+  }
+  if (
+    (options.requireDerivative ?? true) &&
+    data.bubble_urn &&
+    !aps.manifests.findOneBy("urn", data.bubble_urn) &&
+    !aps.translationJobs.findOneBy("urn", data.bubble_urn)
+  ) {
+    throw new Error(`APS document version '${data.version_id}' references unknown manifest '${data.bubble_urn}'.`);
+  }
+  return aps.documentVersions.insert(data);
 }
 
 function versionNumber(versionId: string, configured?: number): number {
@@ -66,7 +111,9 @@ function validateFolders(aps: ApsStore): void {
     if (folder.parent_folder_id) {
       const parent = aps.documentFolders.findOneBy("folder_id", folder.parent_folder_id);
       if (!parent) {
-        throw new Error(`APS document folder '${folder.folder_id}' references unknown parent '${folder.parent_folder_id}'.`);
+        throw new Error(
+          `APS document folder '${folder.folder_id}' references unknown parent '${folder.parent_folder_id}'.`,
+        );
       }
       if (parent.project_id !== folder.project_id) {
         throw new Error(`APS document folder '${folder.folder_id}' references a parent from another project.`);
@@ -126,10 +173,7 @@ export function folderAncestors(aps: ApsStore, projectId: string, folderId: stri
   return ancestors;
 }
 
-export function documentItemForVersion(
-  aps: ApsStore,
-  version: ApsDocumentVersion,
-): ApsDocumentItem | undefined {
+export function documentItemForVersion(aps: ApsStore, version: ApsDocumentVersion): ApsDocumentItem | undefined {
   const item = aps.documentItems.findOneBy("item_id", version.item_id);
   return item?.project_id === version.project_id ? item : undefined;
 }
@@ -148,20 +192,20 @@ export function seedDocumentTreeFromConfig(aps: ApsStore, config: ApsSeedConfig)
 
   for (const project of aps.projects.all()) {
     if (aps.documentFolders.findBy("project_id", project.project_id).length > 0) continue;
-    insertFolder(aps, { id: projectFolderId(project.project_id), project_id: project.project_id, name: "Project Files" });
+    insertFolder(aps, {
+      id: projectFolderId(project.project_id),
+      project_id: project.project_id,
+      name: "Project Files",
+    });
   }
   validateFolders(aps);
 
   for (const seed of config.document_items ?? []) {
     if (aps.documentItems.findOneBy("item_id", seed.id)) continue;
-    const folder = aps.documentFolders.findOneBy("folder_id", seed.folder_id);
-    if (!folder || folder.project_id !== seed.project_id) {
-      throw new Error(`APS document item '${seed.id}' references unknown folder '${seed.folder_id}'.`);
-    }
     const actor = seed.created_by ?? DEFAULT_USER_EMAIL;
     const created = seed.create_time ?? DEFAULT_TIMESTAMP;
     const modifier = seed.last_modified_by ?? actor;
-    aps.documentItems.insert({
+    createDocumentItem(aps, {
       item_id: seed.id,
       project_id: seed.project_id,
       folder_id: seed.folder_id,
@@ -192,7 +236,7 @@ export function seedDocumentTreeFromConfig(aps: ApsStore, config: ApsSeedConfig)
     const actor = seed.created_by ?? DEFAULT_USER_EMAIL;
     const created = seed.create_time ?? DEFAULT_TIMESTAMP;
     const modifier = seed.last_modified_by ?? actor;
-    aps.documentItems.insert({
+    createDocumentItem(aps, {
       item_id: seed.item_id,
       project_id: seed.project_id,
       folder_id: seed.folder_id,
@@ -223,31 +267,23 @@ export function seedDocumentTreeFromConfig(aps: ApsStore, config: ApsSeedConfig)
       throw new Error(`APS document version '${seed.version_id}' conflicts with its item's folder.`);
     }
     const displayName = seed.display_name ?? item.display_name;
-    const extension = seed.file_type ?? fileType(displayName);
+    const extension = seed.file_type ?? documentFileType(displayName);
     const number = versionNumber(seed.version_id, seed.version_number);
-    if (!Number.isInteger(number) || number < 1) {
-      throw new Error(`APS document version '${seed.version_id}' must have a positive integer version number.`);
-    }
-    if (aps.documentVersions.findBy("item_id", item.item_id).some((version) => version.version_number === number)) {
-      throw new Error(`APS document item '${item.item_id}' has more than one version numbered ${number}.`);
-    }
     const bubbleUrn = seed.bubble_urn === undefined ? DEFAULT_MANIFEST_URN : seed.bubble_urn;
-    if (bubbleUrn && !aps.manifests.findOneBy("urn", bubbleUrn)) {
-      throw new Error(`APS document version '${seed.version_id}' references unknown manifest '${bubbleUrn}'.`);
-    }
     const actor = seed.created_by ?? DEFAULT_USER_EMAIL;
     const created = seed.create_time ?? item.create_time;
     const modifier = seed.last_modified_by ?? actor;
-    aps.documentVersions.insert({
+    createDocumentVersion(aps, {
       version_id: seed.version_id,
       item_id: seed.item_id,
       project_id: seed.project_id,
       version_number: number,
       display_name: displayName,
       file_type: extension,
-      mime_type: seed.mime_type ?? mimeType(extension),
+      mime_type: seed.mime_type ?? documentMimeType(extension),
       storage_size: seed.storage_size ?? 0,
-      storage_urn: seed.storage_urn ?? `urn:adsk.objects:os.object:emulate-bucket/${encodeURIComponent(seed.version_id)}`,
+      storage_urn:
+        seed.storage_urn ?? `urn:adsk.objects:os.object:emulate-bucket/${encodeURIComponent(seed.version_id)}`,
       region: (seed.region ?? "US").toUpperCase(),
       bubble_urn: bubbleUrn,
       viewable_id: seed.viewable_id ?? "emulate-3d-view",

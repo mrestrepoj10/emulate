@@ -53,6 +53,7 @@ You are an expert in APS Model Derivative. Build translation and extraction work
 - Prefer `svf2` for modern Viewer workflows; use `svf` only for compatibility needs.
 - Set the `region` header consistently for jobs, manifests, metadata, thumbnails, and downloads. Do not mix regions for the same derivative.
 - Treat job-level `x-ads-force: true` as destructive: it removes the existing manifest and generated derivatives before recreating them.
+- In the local APS emulator, jobs accept `svf2`, `svf`, and `thumbnail`; manifests advance lazily without timers, `x-ads-force: true` resets the job, and terminal observation emits `extraction.finished` once. The emulator returns a plausible manifest tree but never serves geometry.
 - Prefer webhooks for long translations. If polling manifests, use backoff, surface child messages, and stop on failed or timed out statuses.
 - Use `externalId` for persistent object references. `objectid` values are non-persistent and can change after retranslation.
 

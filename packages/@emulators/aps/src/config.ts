@@ -250,6 +250,8 @@ export interface ApsSeedConfig {
       derivatives?: ApsManifestDerivative[];
     }
   >;
+  upload?: Partial<ApsUploadConfig>;
+  translation?: Partial<ApsTranslationConfig>;
   webhook_timing?: Partial<ApsWebhookTimingConfig>;
   model_coordination_timing?: Partial<ApsModelCoordinationTimingConfig>;
   document_folders?: ApsDocumentFolderSeed[];
@@ -305,6 +307,26 @@ export interface ApsModelCoordinationTimingConfig {
   processing_ms: number;
   signed_url_ttl_ms: number;
 }
+
+export interface ApsUploadConfig {
+  maxObjectBytes: number;
+}
+
+export interface ApsTranslationConfig {
+  autoTranslateOnVersionAdd: boolean;
+  durationMs: number;
+  failForExtensions: string[];
+}
+
+export const DEFAULT_UPLOAD_CONFIG: ApsUploadConfig = {
+  maxObjectBytes: 25 * 1024 * 1024,
+};
+
+export const DEFAULT_TRANSLATION_CONFIG: ApsTranslationConfig = {
+  autoTranslateOnVersionAdd: true,
+  durationMs: 15_000,
+  failForExtensions: ["zip"],
+};
 
 export const DEFAULT_MODEL_COORDINATION_TIMING: ApsModelCoordinationTimingConfig = {
   processing_ms: 25,

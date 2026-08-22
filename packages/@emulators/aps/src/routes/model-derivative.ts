@@ -1,8 +1,12 @@
 import type { RouteContext } from "@emulators/core";
 import { apsAuth } from "../auth.js";
+import type { ApsTranslationOutputFormat } from "../entities.js";
+import { isRecordObject, jsonObjectBody, optionalString } from "../helpers.js";
+import { badInput, notFound } from "../problem.js";
 import { getApsStore } from "../store.js";
+import { enqueueTranslation, manifestForJob, refreshTranslationJob } from "../translation.js";
 
-const VIEWABLE_INPUT_FORMATS = [
+export const VIEWABLE_INPUT_FORMATS = [
   "3dm",
   "3ds",
   "3dxml",
@@ -180,13 +184,84 @@ const SUPPORTED_FORMATS = {
   },
 };
 
+export function isViewableInputFormat(sourceName: string): boolean {
+  const basename = sourceName.split(/[\\/]/).at(-1)?.toLowerCase() ?? sourceName.toLowerCase();
+  const segments = basename.split(".");
+  const candidates = segments.length < 2 ? [] : [segments.at(-1)!, segments.slice(-2).join(".")];
+  return VIEWABLE_INPUT_FORMATS.some((pattern) =>
+    candidates.some((candidate) => new RegExp(`^(?:${pattern})$`, "i").test(candidate)),
+  );
+}
+
+function translationFormats(value: unknown): ApsTranslationOutputFormat[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const formats: ApsTranslationOutputFormat[] = [];
+  for (const candidate of value) {
+    if (!isRecordObject(candidate)) return null;
+    const type = optionalString(candidate.type);
+    if (type !== "svf2" && type !== "svf" && type !== "thumbnail") return null;
+    if (
+      candidate.views !== undefined &&
+      (!Array.isArray(candidate.views) || candidate.views.some((view) => typeof view !== "string"))
+    ) {
+      return null;
+    }
+    formats.push({ type, views: (candidate.views as string[] | undefined) ?? [] });
+  }
+  return formats;
+}
+
 export function modelDerivativeRoutes({ app, store }: RouteContext): void {
   const aps = getApsStore(store);
-  app.use("/modelderivative/v2/*", apsAuth(store, { scopes: ["data:read"] }));
+  const readAuth = apsAuth(store, { scopes: ["data:read"] });
+  const writeAuth = apsAuth(store, { scopes: ["data:create", "data:write"] });
+  app.use("/modelderivative/v2/*", (c, next) => (c.req.method === "GET" ? readAuth(c, next) : next()));
+  app.use("/modelderivative/v2/designdata/job", writeAuth);
 
   app.get("/modelderivative/v2/designdata/formats", (c) => c.json(SUPPORTED_FORMATS));
 
-  app.get("/modelderivative/v2/designdata/:urn/manifest", (c) => {
+  app.post("/modelderivative/v2/designdata/job", async (c) => {
+    const body = await jsonObjectBody(c);
+    const input = body && isRecordObject(body.input) ? body.input : null;
+    const output = body && isRecordObject(body.output) ? body.output : null;
+    const urn = input ? optionalString(input.urn) : undefined;
+    const formats = translationFormats(output?.formats);
+    if (!urn) return badInput(c, "input.urn", "input.urn is required.");
+    if (!formats) return badInput(c, "output.formats", "At least one svf2, svf, or thumbnail output is required.");
+    let objectId: string;
+    try {
+      objectId = Buffer.from(urn, "base64url").toString("utf8");
+    } catch {
+      return badInput(c, "input.urn", "input.urn must be a base64url-encoded storage object ID.");
+    }
+    const storage = aps.storageObjects.findOneBy("object_id", objectId);
+    if (!storage || !storage.uploaded_at) return notFound(c, "The source storage object");
+    if (!isViewableInputFormat(storage.name)) {
+      return badInput(c, "input.urn", `The .${storage.name.split(".").at(-1) ?? ""} source format is not viewable.`);
+    }
+    const force = c.req.header("x-ads-force")?.toLowerCase() === "true";
+    const result = enqueueTranslation(aps, store, {
+      urn,
+      sourceName: storage.name,
+      outputFormats: formats,
+      force,
+    });
+    return c.json(
+      {
+        result: "created",
+        urn,
+        acceptedJobs: { output: formats.map((format) => ({ destination: { region: "us" }, formats: [format] })) },
+      },
+      result.created ? 200 : 201,
+    );
+  });
+
+  app.get("/modelderivative/v2/designdata/:urn/manifest", async (c) => {
+    const job = aps.translationJobs.findOneBy("urn", c.req.param("urn"));
+    if (job) {
+      const refreshed = await refreshTranslationJob(aps, store, job);
+      return c.json(manifestForJob(refreshed));
+    }
     const manifest = aps.manifests.findOneBy("urn", c.req.param("urn"));
     if (!manifest) return c.body(null, 404);
     return c.json({

@@ -13,8 +13,8 @@ function signingSecret(store: Store): string {
   return secret;
 }
 
-function signatureFor(store: Store, blobId: string, expires: number, nonce: string): string {
-  return createHmac("sha256", signingSecret(store)).update(`${blobId}\n${expires}\n${nonce}`).digest("base64url");
+export function signedResourceSignature(store: Store, resourceId: string, expires: number, nonce: string): string {
+  return createHmac("sha256", signingSecret(store)).update(`${resourceId}\n${expires}\n${nonce}`).digest("base64url");
 }
 
 function signaturesMatch(actual: string, expected: string): boolean {
@@ -44,30 +44,48 @@ export function issueSignedBlobUrl(
   blobId: string,
   ttlMs: number,
 ): { url: string; validUntil: string } {
+  return issueSignedResourceUrl(store, baseUrl, `/_aps/blobs/${encodeURIComponent(blobId)}`, blobId, ttlMs);
+}
+
+export function issueSignedResourceUrl(
+  store: Store,
+  baseUrl: string,
+  path: string,
+  resourceId: string,
+  ttlMs: number,
+): { url: string; validUntil: string } {
   const expires = Date.now() + ttlMs;
   const nonce = randomBytes(12).toString("base64url");
-  const signature = signatureFor(store, blobId, expires, nonce);
-  const url = new URL(`/_aps/blobs/${encodeURIComponent(blobId)}`, baseUrl);
+  const signature = signedResourceSignature(store, resourceId, expires, nonce);
+  const url = new URL(path, baseUrl);
   url.searchParams.set("expires", String(expires));
   url.searchParams.set("nonce", nonce);
   url.searchParams.set("signature", signature);
   return { url: url.toString(), validUntil: new Date(expires).toISOString() };
 }
 
+export function validateSignedResource(
+  store: Store,
+  resourceId: string,
+  values: { expires?: string; nonce?: string; signature?: string },
+): boolean {
+  const expires = values.expires ? Number(values.expires) : Number.NaN;
+  if (!Number.isSafeInteger(expires) || !values.nonce || !values.signature || expires <= Date.now()) return false;
+  const expected = signedResourceSignature(store, resourceId, expires, values.nonce);
+  return signaturesMatch(values.signature, expected);
+}
+
 export function signedBlobRoutes({ app, store }: RouteContext): void {
   const aps = getApsStore(store);
   app.get("/_aps/blobs/:blobId", (c) => {
     const blobId = c.req.param("blobId");
-    const expiresValue = c.req.query("expires");
-    const nonce = c.req.query("nonce");
-    const signature = c.req.query("signature");
-    const expires = expiresValue ? Number(expiresValue) : Number.NaN;
-
-    if (!Number.isSafeInteger(expires) || !nonce || !signature || expires <= Date.now()) {
-      return forbidden(c, "The signed blob URL is invalid or has expired.");
-    }
-    const expected = signatureFor(store, blobId, expires, nonce);
-    if (!signaturesMatch(signature, expected)) {
+    if (
+      !validateSignedResource(store, blobId, {
+        expires: c.req.query("expires"),
+        nonce: c.req.query("nonce"),
+        signature: c.req.query("signature"),
+      })
+    ) {
       return forbidden(c, "The signed blob URL is invalid or has expired.");
     }
 

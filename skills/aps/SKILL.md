@@ -1,12 +1,12 @@
 ---
 name: aps
-description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management, Model Derivative, Autodesk Construction Cloud workflow reads including Model Coordination, and active Webhooks for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs, projects, folder trees, item histories, seeded manifests, Issues, RFIs, Sheets, model sets, clash tests, expiring clash resources, webhook subscriptions, signed callback delivery, retry lifecycle testing, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Data Management folders", "Data Management versions", "Model Derivative manifest", "ACC Issues", "ACC RFIs", "ACC Sheets", "Model Coordination", "clash test", "APS webhooks", "dm.version.added", "extraction.finished", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
+description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management reads and signed-S3 uploads, simulated Model Derivative translation, Autodesk Construction Cloud workflow reads including Model Coordination, and active Webhooks for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs, projects, folder trees, item histories, file uploads, translation jobs, manifests, Issues, RFIs, Sheets, model sets, clash tests, expiring clash resources, webhook subscriptions, signed callback delivery, retry lifecycle testing, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Data Management folders", "Data Management uploads", "Data Management versions", "Model Derivative job", "Model Derivative manifest", "ACC Issues", "ACC RFIs", "ACC Sheets", "Model Coordination", "clash test", "APS webhooks", "dm.version.added", "extraction.finished", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
 allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 ---
 
 # Autodesk Platform Services (APS) Emulator
 
-APS authentication v2 emulation plus Data Management, Model Derivative, ACC Issues, RFIs, Sheets, and Model Coordination reads, with active Webhooks delivery and local event simulators. Protected routes validate the emulator's own RS256 token signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by these routes.
+APS authentication v2 emulation plus Data Management reads and uploads, simulated Model Derivative translation, ACC Issues, RFIs, Sheets, and Model Coordination reads, with active Webhooks delivery and local event simulators. Protected routes validate the emulator's own RS256 token signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by these routes.
 
 ## Start
 
@@ -50,6 +50,7 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/project/v1/hubs`                             | `$APS_EMULATOR_URL/project/v1/hubs`                             |
 | `https://developer.api.autodesk.com/project/v1/hubs/:hubId/projects`             | `$APS_EMULATOR_URL/project/v1/hubs/:hubId/projects`             |
 | `https://developer.api.autodesk.com/data/v1/...`                                 | `$APS_EMULATOR_URL/data/v1/...`                                 |
+| `https://developer.api.autodesk.com/oss/v2/...`                                  | `$APS_EMULATOR_URL/oss/v2/...`                                  |
 | `https://developer.api.autodesk.com/modelderivative/v2/designdata/formats`       | `$APS_EMULATOR_URL/modelderivative/v2/designdata/formats`       |
 | `https://developer.api.autodesk.com/modelderivative/v2/designdata/:urn/manifest` | `$APS_EMULATOR_URL/modelderivative/v2/designdata/:urn/manifest` |
 | `https://developer.api.autodesk.com/construction/issues/v1/...`                  | `$APS_EMULATOR_URL/construction/issues/v1/...`                  |
@@ -154,6 +155,12 @@ aps:
     reactivate_after_ms: 1000
     max_reactivation_cycles: 5
     delivery_timeout_ms: 6000
+  upload:
+    maxObjectBytes: 26214400
+  translation:
+    autoTranslateOnVersionAdd: true
+    durationMs: 15000
+    failForExtensions: [zip]
   document_folders:
     - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
       project_id: b.emulate-project
@@ -282,7 +289,19 @@ curl "$MANIFEST_URL" -H "$AUTH"
 
 The tree adds top-folder, folder detail and contents, item detail and versions, tip, and version detail reads. Folder contents returns mixed folder and item resources plus each page item's tip in `included`. It accepts `filter[type]`, `filter[extension.type]`, and zero-based `page[number]` with `page[limit]` up to 200. Responses use JSON:API envelopes with resolving `links` and `relationships`.
 
-## Model Derivative Reads
+## Data Management Uploads and Translation
+
+Use a 3-legged token carrying `data:create data:write` for project writes. Follow this sequence:
+
+1. Create project storage with `POST /data/v1/projects/:projectId/storage` and a JSON:API target folder relationship.
+2. Request one or more signed URLs from `GET /oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload`.
+3. PUT raw bytes to every returned URL without a bearer token, then complete the upload by POSTing its `uploadKey` to the same object route.
+4. Create the first item with `POST /data/v1/projects/:projectId/items`, or add a version with `POST /data/v1/projects/:projectId/versions`.
+5. Poll the version's derivative relationship, or force it through `POST /_aps/simulate/translation-complete`.
+
+The signed URL carries its own nonce, signature, and expiry. Uploaded bytes remain in memory with a configurable 25 MB default cap. New versions auto-enqueue a translation by default and emit `dm.version.added`. Manifest reads advance the job lazily from `pending` through `inprogress` to `success`, or `failed` for configured extensions, and emit `extraction.finished` once at the terminal transition.
+
+## Model Derivative Reads and Jobs
 
 Formats and manifests accept either a 2-legged or 3-legged token carrying `data:read`. After obtaining the 2-legged token above:
 
@@ -296,7 +315,7 @@ curl "$APS_URL/modelderivative/v2/designdata/$SAMPLE_URN/manifest" \
   -H "Authorization: Bearer <2-legged-access-token>"
 ```
 
-The optional `region` parameter is accepted and ignored. Unknown URNs return `404`, matching the real empty-body response.
+Create jobs with `POST /modelderivative/v2/designdata/job`, an encoded uploaded object ID, and `svf2`, `svf`, or `thumbnail` output. The route requires `data:create data:write`; `x-ads-force: true` resets an existing job. Unknown source or output formats return `400`. Unknown manifest URNs return `404`, matching the real empty-body response. Successful manifests contain a plausible derivative tree for state-driven tests, but the emulator does not serve geometry, metadata, properties, thumbnails, or downloads.
 
 ## ACC Workflow Reads
 
@@ -403,7 +422,7 @@ const expected = `sha1hash=${createHmac("sha1", secret).update(rawBody).digest("
 const valid = timingSafeEqual(Buffer.from(receivedSignature), Buffer.from(expected));
 ```
 
-A per-hook `token` overrides the identity secret. The generic `POST /_aps/simulate/event` route returns per-hook statuses, attempts, signature presence, and drop reasons. Convenience routes cover `dm.version.added`, `extraction.finished`, and `issue.created-1.0` from seeded state.
+A per-hook `token` overrides the identity secret. The generic `POST /_aps/simulate/event` route returns per-hook statuses, attempts, signature presence, and drop reasons. Convenience routes cover `dm.version.added`, `extraction.finished`, and `issue.created-1.0` from seeded state. `POST /_aps/simulate/translation-complete` changes a live job before emitting its one terminal extraction event; `POST /_aps/simulate/extraction-finished` only emits from seeded manifest state.
 
 Event matching supports exact names, `*`, `dm.*.modified`, and `*.added`; recursive folder ancestry; exact workflow/project/company scope; expiry deletion; and the documented JSONPath subset. Filters support comparisons, `in [...]`, `&&`, `||`, and arrays combined with AND.
 

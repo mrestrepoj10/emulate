@@ -25,8 +25,8 @@ GitHub API coverage:
   Includes repository contents, raw downloads, commit history, commit details, and ref comparisons.
 
 APS API coverage:
-  Includes OAuth, Data Management hub-to-version trees, Model Derivative, ACC Issues, RFIs, Sheets,
-  Model Coordination, expiring clash-result downloads, Webhooks, and event simulators.
+  Includes OAuth, Data Management reads and signed-S3 uploads, Model Derivative translation jobs,
+  ACC Issues, RFIs, Sheets, Model Coordination, Webhooks, and event simulators.
 
 Webhook signatures:
   Stripe webhook secrets produce a Stripe-Signature header for raw-body verification.

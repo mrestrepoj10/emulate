@@ -230,6 +230,48 @@ export interface ApsDocumentVersion extends Entity {
   last_modified_time: string;
 }
 
+export interface ApsStorageObject extends Entity {
+  object_id: string;
+  bucket_key: string;
+  object_key: string;
+  project_id: string;
+  folder_id: string;
+  name: string;
+  size: number;
+  sha1: string;
+  content_base64: string | null;
+  uploaded_at: string | null;
+}
+
+export interface ApsUploadSession extends Entity {
+  upload_key: string;
+  object_key: string;
+  bucket_key: string;
+  parts_base64: Array<string | null>;
+  expected_parts: number;
+  expires_at: string;
+}
+
+export type ApsTranslationJobStatus = "pending" | "inprogress" | "success" | "failed";
+
+export interface ApsTranslationOutputFormat {
+  type: "svf2" | "svf" | "thumbnail";
+  views: string[];
+}
+
+export interface ApsTranslationJob extends Entity {
+  urn: string;
+  source_name: string;
+  region: string;
+  status: ApsTranslationJobStatus;
+  progress: string;
+  started_at: string;
+  completes_at: string;
+  output_formats: ApsTranslationOutputFormat[];
+  force_count: number;
+  webhook_emitted: boolean;
+}
+
 export type ApsModelSetVersionStatus = "Pending" | "Processing" | "Successful" | "Partial" | "Failed";
 export type ApsClashTestStatus = "Pending" | "Processing" | "Success" | "Failed";
 

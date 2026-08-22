@@ -241,6 +241,12 @@ aps:
     reactivate_after_ms: 1000
     max_reactivation_cycles: 5
     delivery_timeout_ms: 6000
+  upload:
+    maxObjectBytes: 26214400
+  translation:
+    autoTranslateOnVersionAdd: true
+    durationMs: 15000
+    failForExtensions: [zip]
   document_folders:
     - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
       project_id: b.emulate-project

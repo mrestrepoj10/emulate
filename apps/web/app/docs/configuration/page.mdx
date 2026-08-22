@@ -477,6 +477,12 @@ aps:
         - outputType: svf2
           status: success
           progress: complete
+  upload:
+    maxObjectBytes: 26214400
+  translation:
+    autoTranslateOnVersionAdd: true
+    durationMs: 15000
+    failForExtensions: [zip]
   document_folders:
     - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
       project_id: b.emulate-project
@@ -502,3 +508,4 @@ Client `type` is inferred when omitted: confidential when a `client_secret` is p
 Every APS project `hub_id` must match a hub in the effective seed data.
 Folders reference parents, items reference folders, and versions reference items. Invalid parents and folder cycles fail during seeding.
 ACC resources use the Data Management project ID in seed config. Remove `b.` for Issues and RFIs request paths. Sheets accepts either form.
+`upload.maxObjectBytes` caps in-memory signed uploads. Translation duration is evaluated lazily on manifest reads, and `failForExtensions` values may be written with or without a leading dot.

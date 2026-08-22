@@ -998,8 +998,14 @@ Autodesk Platform Services (formerly Forge) emulation with authentication v2, Da
 - `GET /data/v1/projects/:projectId/items/:itemId/versions` - list an item's version history
 - `GET /data/v1/projects/:projectId/items/:itemId/tip` - get an item's tip version
 - `GET /data/v1/projects/:projectId/versions/:versionId` - get a version by URL-encoded URN
+- `POST /data/v1/projects/:projectId/storage` - allocate project storage for an upload
+- `GET/POST /oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload` - issue and complete signed upload URLs
+- `PUT /oss/v2/signed-upload/:uploadKey/:part` - upload raw bytes using only the signed URL
+- `POST /data/v1/projects/:projectId/items` - create an item and its first version
+- `POST /data/v1/projects/:projectId/versions` - add the next version to an item
 - `GET /modelderivative/v2/designdata/formats` - list translation formats with a 2-legged or 3-legged token
-- `GET /modelderivative/v2/designdata/:urn/manifest` - get a seeded manifest with a 2-legged or 3-legged token
+- `POST /modelderivative/v2/designdata/job` - start or force a simulated translation job
+- `GET /modelderivative/v2/designdata/:urn/manifest` - get a seeded or live translation manifest
 - `GET /construction/issues/v1/projects/:projectId/users/me` - get current-user Issues permissions
 - `GET /construction/issues/v1/projects/:projectId/issue-types` - list issue types
 - `GET /construction/issues/v1/projects/:projectId/issues` - list and filter issues
@@ -1031,6 +1037,7 @@ Autodesk Platform Services (formerly Forge) emulation with authentication v2, Da
 - `POST /_aps/simulate/event` - emit an arbitrary local APS event
 - `POST /_aps/simulate/dm-version-added` - emit from a seeded Data Management version
 - `POST /_aps/simulate/extraction-finished` - emit from a seeded manifest
+- `POST /_aps/simulate/translation-complete` - finish a live translation job and emit its terminal webhook
 - `POST /_aps/simulate/issue-created` - emit from a seeded ACC issue
 - `POST /_aps/simulate/modelset-version-added` - add a model set version and run its clash test
 
@@ -1041,6 +1048,7 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/authentication/v2/...`      | `$APS_EMULATOR_URL/authentication/v2/...`      |
 | `https://developer.api.autodesk.com/project/v1/...`             | `$APS_EMULATOR_URL/project/v1/...`             |
 | `https://developer.api.autodesk.com/data/v1/...`                | `$APS_EMULATOR_URL/data/v1/...`                |
+| `https://developer.api.autodesk.com/oss/v2/...`                 | `$APS_EMULATOR_URL/oss/v2/...`                 |
 | `https://developer.api.autodesk.com/modelderivative/v2/...`     | `$APS_EMULATOR_URL/modelderivative/v2/...`     |
 | `https://developer.api.autodesk.com/construction/issues/v1/...` | `$APS_EMULATOR_URL/construction/issues/v1/...` |
 | `https://developer.api.autodesk.com/construction/rfis/v3/...`   | `$APS_EMULATOR_URL/construction/rfis/v3/...`   |
@@ -1051,6 +1059,8 @@ Real APS paths map 1:1 onto the emulator:
 | `https://api.userprofile.autodesk.com/userinfo`                 | `$APS_EMULATOR_URL/userinfo`                   |
 
 With no config, the emulator seeds a confidential client `aps-test-client` / `aps-test-secret`, a public client `aps-test-app`, a user `testuser@autodesk.local`, one hub, two projects, realistic folder trees with item histories, one ACC project membership, sample Issues, RFIs, Sheets, two coordinated Docs models with completed manifests, and one successful model set version and clash test. Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Authorization codes are single use and expire after 5 minutes. Refresh tokens live for 15 days and are single use: every refresh returns a new refresh token, and replaying an already-used refresh token invalidates the whole grant family, matching real APS behavior. PKCE supports `S256` only and is required for public clients.
+
+Data Management writes use the modern project storage and signed S3 flow. Storage, item, version, and Model Derivative job routes require `data:create data:write`; signed part PUTs authenticate only through their expiring URL. Uploaded bytes remain in memory with a default 25 MB object cap. New versions auto-enqueue timer-free translations, emit `dm.version.added`, and later emit `extraction.finished` when a manifest read or simulator action first observes a terminal state. Successful manifests include a plausible derivatives tree, but no geometry is served.
 
 ```yaml
 aps:
@@ -1143,6 +1153,12 @@ aps:
     reactivate_after_ms: 1000
     max_reactivation_cycles: 5
     delivery_timeout_ms: 6000
+  upload:
+    maxObjectBytes: 26214400
+  translation:
+    autoTranslateOnVersionAdd: true
+    durationMs: 15000
+    failForExtensions: [zip]
   document_folders:
     - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
       project_id: b.emulate-project

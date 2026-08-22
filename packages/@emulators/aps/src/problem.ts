@@ -53,3 +53,11 @@ export function forbidden(c: Context<AppEnv>, detail: string): Response {
     detail,
   });
 }
+
+export function payloadTooLarge(c: Context<AppEnv>, detail: string): Response {
+  return problem(c, 413, {
+    type: "PayloadTooLarge",
+    title: "The request payload is too large",
+    detail,
+  });
+}
