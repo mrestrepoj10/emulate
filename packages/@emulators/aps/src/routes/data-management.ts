@@ -1,12 +1,11 @@
-import { randomUUID } from "node:crypto";
 import type { AppEnv, Context, RouteContext } from "@emulators/core";
 import { apsAuth } from "../auth.js";
 import { itemTip, rootFolderForProject } from "../dm-tree.js";
 import type { ApsDocumentFolder, ApsDocumentItem, ApsDocumentVersion, ApsHub, ApsProject } from "../entities.js";
+import { jsonApiDocument, jsonApiError, jsonApiNotFound, routeId } from "../jsonapi.js";
 import type { ApsStore } from "../store.js";
 import { getApsStore } from "../store.js";
 
-const JSON_API_TYPE = "application/vnd.api+json";
 const FOLDER_EXTENSION_TYPE = "folders:autodesk.bim360:Folder";
 const VERSION_EXTENSION_TYPE = "versions:autodesk.bim360:File";
 
@@ -37,14 +36,6 @@ function versionPath(projectId: string, versionId: string): string {
 function requestHref(c: Context<AppEnv>, baseUrl: string): string {
   const requestUrl = new URL(c.req.url);
   return `${baseUrl}${requestUrl.pathname}${requestUrl.search}`;
-}
-
-function routeId(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
 }
 
 function schemaHref(type: string): string {
@@ -264,33 +255,6 @@ export function documentVersionData(baseUrl: string, version: ApsDocumentVersion
   };
 }
 
-function jsonApiDocument(
-  c: Context<AppEnv>,
-  selfHref: string,
-  data: unknown,
-  options?: { included?: unknown[]; links?: Record<string, unknown> },
-): Response {
-  c.header("Content-Type", JSON_API_TYPE);
-  return c.json({
-    jsonapi: { version: "1.0" },
-    links: options?.links ?? { self: { href: selfHref } },
-    data,
-    ...(options?.included ? { included: options.included } : {}),
-  });
-}
-
-function jsonApiError(c: Context<AppEnv>, status: 400 | 404, code: string, detail: string): Response {
-  c.header("Content-Type", JSON_API_TYPE);
-  return c.json(
-    { jsonapi: { version: "1.0" }, errors: [{ id: randomUUID(), status: String(status), code, detail }] },
-    status,
-  );
-}
-
-function notFound(c: Context<AppEnv>, detail: string): Response {
-  return jsonApiError(c, 404, "NOT_FOUND", detail);
-}
-
 function projectForDataRoute(aps: ApsStore, projectId: string): ApsProject | undefined {
   return aps.projects.findOneBy("project_id", routeId(projectId));
 }
@@ -330,7 +294,6 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
   const aps = getApsStore(store);
   const auth = apsAuth(store, { scopes: ["data:read"], requireUser: true });
   app.use("/project/v1/*", auth);
-  app.use("/data/v1/*", (c, next) => (c.req.method === "GET" ? auth(c, next) : next()));
 
   app.get("/project/v1/hubs", (c) =>
     jsonApiDocument(
@@ -342,13 +305,13 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
 
   app.get("/project/v1/hubs/:hubId", (c) => {
     const hub = aps.hubs.findOneBy("hub_id", routeId(c.req.param("hubId")));
-    if (!hub) return notFound(c, `The hub ${c.req.param("hubId")} was not found.`);
+    if (!hub) return jsonApiNotFound(c, `The hub ${c.req.param("hubId")} was not found.`);
     return jsonApiDocument(c, `${baseUrl}${hubPath(hub.hub_id)}`, hubData(baseUrl, hub));
   });
 
   app.get("/project/v1/hubs/:hubId/projects", (c) => {
     const hubId = routeId(c.req.param("hubId"));
-    if (!aps.hubs.findOneBy("hub_id", hubId)) return notFound(c, `The hub ${hubId} was not found.`);
+    if (!aps.hubs.findOneBy("hub_id", hubId)) return jsonApiNotFound(c, `The hub ${hubId} was not found.`);
     const path = `${hubPath(hubId)}/projects`;
     return jsonApiDocument(
       c,
@@ -359,11 +322,11 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
 
   app.get("/project/v1/hubs/:hubId/projects/:projectId", (c) => {
     const hubId = routeId(c.req.param("hubId"));
-    if (!aps.hubs.findOneBy("hub_id", hubId)) return notFound(c, `The hub ${hubId} was not found.`);
+    if (!aps.hubs.findOneBy("hub_id", hubId)) return jsonApiNotFound(c, `The hub ${hubId} was not found.`);
     const projectId = routeId(c.req.param("projectId"));
     const project = aps.projects.findOneBy("project_id", projectId);
     if (!project || project.hub_id !== hubId)
-      return notFound(c, `The project ${projectId} was not found in hub ${hubId}.`);
+      return jsonApiNotFound(c, `The project ${projectId} was not found in hub ${hubId}.`);
     return jsonApiDocument(
       c,
       `${baseUrl}${projectPath(hubId, project.project_id)}`,
@@ -376,7 +339,7 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
     const projectId = routeId(c.req.param("projectId"));
     const project = aps.projects.findOneBy("project_id", projectId);
     if (!project || project.hub_id !== hubId)
-      return notFound(c, `The project ${projectId} was not found in hub ${hubId}.`);
+      return jsonApiNotFound(c, `The project ${projectId} was not found in hub ${hubId}.`);
     const folders = aps.documentFolders
       .findBy("project_id", project.project_id)
       .filter((folder) => folder.parent_folder_id === null && !folder.hidden);
@@ -387,22 +350,22 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
     );
   });
 
-  app.get("/data/v1/projects/:projectId/folders/:folderId", (c) => {
+  app.get("/data/v1/projects/:projectId/folders/:folderId", auth, (c) => {
     const project = projectForDataRoute(aps, c.req.param("projectId"));
     const folderId = routeId(c.req.param("folderId"));
     const folder = aps.documentFolders.findOneBy("folder_id", folderId);
     if (!project || !folder || folder.project_id !== project.project_id) {
-      return notFound(c, `The folder ${folderId} was not found in project ${c.req.param("projectId")}.`);
+      return jsonApiNotFound(c, `The folder ${folderId} was not found in project ${c.req.param("projectId")}.`);
     }
     return jsonApiDocument(c, requestHref(c, baseUrl), folderData(baseUrl, aps, folder));
   });
 
-  app.get("/data/v1/projects/:projectId/folders/:folderId/contents", (c) => {
+  app.get("/data/v1/projects/:projectId/folders/:folderId/contents", auth, (c) => {
     const project = projectForDataRoute(aps, c.req.param("projectId"));
     const folderId = routeId(c.req.param("folderId"));
     const folder = aps.documentFolders.findOneBy("folder_id", folderId);
     if (!project || !folder || folder.project_id !== project.project_id) {
-      return notFound(c, `The folder ${folderId} was not found in project ${c.req.param("projectId")}.`);
+      return jsonApiNotFound(c, `The folder ${folderId} was not found in project ${c.req.param("projectId")}.`);
     }
     const parsedPage = pagination(c);
     if (typeof parsedPage === "string") return jsonApiError(c, 400, "BAD_INPUT", parsedPage);
@@ -442,12 +405,12 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
     );
   });
 
-  app.get("/data/v1/projects/:projectId/items/:itemId", (c) => {
+  app.get("/data/v1/projects/:projectId/items/:itemId", auth, (c) => {
     const project = projectForDataRoute(aps, c.req.param("projectId"));
     const itemId = routeId(c.req.param("itemId"));
     const item = aps.documentItems.findOneBy("item_id", itemId);
     if (!project || !item || item.project_id !== project.project_id) {
-      return notFound(c, `The item ${itemId} was not found in project ${c.req.param("projectId")}.`);
+      return jsonApiNotFound(c, `The item ${itemId} was not found in project ${c.req.param("projectId")}.`);
     }
     const tip = itemTip(aps, item.item_id);
     return jsonApiDocument(c, requestHref(c, baseUrl), documentItemData(baseUrl, aps, item), {
@@ -455,12 +418,12 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
     });
   });
 
-  app.get("/data/v1/projects/:projectId/items/:itemId/versions", (c) => {
+  app.get("/data/v1/projects/:projectId/items/:itemId/versions", auth, (c) => {
     const project = projectForDataRoute(aps, c.req.param("projectId"));
     const itemId = routeId(c.req.param("itemId"));
     const item = aps.documentItems.findOneBy("item_id", itemId);
     if (!project || !item || item.project_id !== project.project_id) {
-      return notFound(c, `The item ${itemId} was not found in project ${c.req.param("projectId")}.`);
+      return jsonApiNotFound(c, `The item ${itemId} was not found in project ${c.req.param("projectId")}.`);
     }
     const parsedPage = pagination(c);
     if (typeof parsedPage === "string") return jsonApiError(c, 400, "BAD_INPUT", parsedPage);
@@ -480,23 +443,23 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
     );
   });
 
-  app.get("/data/v1/projects/:projectId/items/:itemId/tip", (c) => {
+  app.get("/data/v1/projects/:projectId/items/:itemId/tip", auth, (c) => {
     const project = projectForDataRoute(aps, c.req.param("projectId"));
     const itemId = routeId(c.req.param("itemId"));
     const item = aps.documentItems.findOneBy("item_id", itemId);
     const tip = item ? itemTip(aps, item.item_id) : undefined;
     if (!project || !item || item.project_id !== project.project_id || !tip) {
-      return notFound(c, `The tip for item ${itemId} was not found in project ${c.req.param("projectId")}.`);
+      return jsonApiNotFound(c, `The tip for item ${itemId} was not found in project ${c.req.param("projectId")}.`);
     }
     return jsonApiDocument(c, requestHref(c, baseUrl), documentVersionData(baseUrl, tip));
   });
 
-  app.get("/data/v1/projects/:projectId/versions/:versionId", (c) => {
+  app.get("/data/v1/projects/:projectId/versions/:versionId", auth, (c) => {
     const project = projectForDataRoute(aps, c.req.param("projectId"));
     const versionId = routeId(c.req.param("versionId"));
     const version = aps.documentVersions.findOneBy("version_id", versionId);
     if (!project || !version || version.project_id !== project.project_id) {
-      return notFound(c, `The version ${versionId} was not found in project ${c.req.param("projectId")}.`);
+      return jsonApiNotFound(c, `The version ${versionId} was not found in project ${c.req.param("projectId")}.`);
     }
     return jsonApiDocument(c, requestHref(c, baseUrl), documentVersionData(baseUrl, version));
   });

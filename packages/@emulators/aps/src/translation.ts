@@ -114,10 +114,12 @@ function successfulDerivative(job: ApsTranslationJob, format: ApsTranslationOutp
   };
 }
 
-export function manifestForJob(job: ApsTranslationJob): TranslationManifest {
-  const failed = job.status === "failed";
-  const derivatives = failed
-    ? [
+function derivativesForJob(job: ApsTranslationJob): ApsManifestDerivative[] {
+  switch (job.status) {
+    case "success":
+      return job.output_formats.map((format) => successfulDerivative(job, format));
+    case "failed":
+      return [
         {
           name: job.source_name,
           status: "failed",
@@ -131,15 +133,18 @@ export function manifestForJob(job: ApsTranslationJob): TranslationManifest {
             },
           ],
         },
-      ]
-    : job.status === "success"
-      ? job.output_formats.map((format) => successfulDerivative(job, format))
-      : job.output_formats.map((format) => ({
-          name: job.source_name,
-          status: job.status,
-          progress: job.progress,
-          outputType: format.type,
-        }));
+      ];
+    default:
+      return job.output_formats.map((format) => ({
+        name: job.source_name,
+        status: job.status,
+        progress: job.progress,
+        outputType: format.type,
+      }));
+  }
+}
+
+export function manifestForJob(job: ApsTranslationJob): TranslationManifest {
   return {
     type: "manifest",
     hasThumbnail: String(job.output_formats.some((format) => format.type === "thumbnail")),
@@ -148,7 +153,7 @@ export function manifestForJob(job: ApsTranslationJob): TranslationManifest {
     region: job.region,
     urn: job.urn,
     version: "1.0",
-    derivatives,
+    derivatives: derivativesForJob(job),
   };
 }
 
@@ -188,12 +193,13 @@ export async function forceTranslationTerminal(
   status: "success" | "failed",
 ): Promise<ApsTranslationJob> {
   const now = new Date().toISOString();
+  const alreadyEmittedForOutcome = job.status === status ? job.webhook_emitted : false;
   const updated =
     aps.translationJobs.update(job.id, {
       status,
       progress: "complete",
       completes_at: now,
-      webhook_emitted: job.status === status && terminal(job.status) ? job.webhook_emitted : false,
+      webhook_emitted: alreadyEmittedForOutcome,
     }) ?? job;
   return emitTerminalWebhook(aps, store, updated);
 }

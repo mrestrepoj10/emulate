@@ -44,11 +44,7 @@ export function createDocumentItem(aps: ApsStore, data: InsertInput<ApsDocumentI
   return aps.documentItems.insert(data);
 }
 
-export function createDocumentVersion(
-  aps: ApsStore,
-  data: InsertInput<ApsDocumentVersion>,
-  options: { requireDerivative?: boolean } = {},
-): ApsDocumentVersion {
+export function createDocumentVersion(aps: ApsStore, data: InsertInput<ApsDocumentVersion>): ApsDocumentVersion {
   const item = aps.documentItems.findOneBy("item_id", data.item_id);
   if (!item || item.project_id !== data.project_id) {
     throw new Error(`APS document version '${data.version_id}' references unknown item '${data.item_id}'.`);
@@ -65,14 +61,6 @@ export function createDocumentVersion(
       .some((version) => version.version_number === data.version_number)
   ) {
     throw new Error(`APS document item '${data.item_id}' has more than one version numbered ${data.version_number}.`);
-  }
-  if (
-    (options.requireDerivative ?? true) &&
-    data.bubble_urn &&
-    !aps.manifests.findOneBy("urn", data.bubble_urn) &&
-    !aps.translationJobs.findOneBy("urn", data.bubble_urn)
-  ) {
-    throw new Error(`APS document version '${data.version_id}' references unknown manifest '${data.bubble_urn}'.`);
   }
   return aps.documentVersions.insert(data);
 }
@@ -270,6 +258,9 @@ export function seedDocumentTreeFromConfig(aps: ApsStore, config: ApsSeedConfig)
     const extension = seed.file_type ?? documentFileType(displayName);
     const number = versionNumber(seed.version_id, seed.version_number);
     const bubbleUrn = seed.bubble_urn === undefined ? DEFAULT_MANIFEST_URN : seed.bubble_urn;
+    if (bubbleUrn && !aps.manifests.findOneBy("urn", bubbleUrn)) {
+      throw new Error(`APS document version '${seed.version_id}' references unknown manifest '${bubbleUrn}'.`);
+    }
     const actor = seed.created_by ?? DEFAULT_USER_EMAIL;
     const created = seed.create_time ?? item.create_time;
     const modifier = seed.last_modified_by ?? actor;

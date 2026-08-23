@@ -1,5 +1,6 @@
 import type { RouteContext } from "@emulators/core";
 import { apsAuth } from "../auth.js";
+import { documentFileType } from "../dm-tree.js";
 import type { ApsTranslationOutputFormat } from "../entities.js";
 import { isRecordObject, jsonObjectBody, optionalString } from "../helpers.js";
 import { badInput, notFound } from "../problem.js";
@@ -184,13 +185,27 @@ const SUPPORTED_FORMATS = {
   },
 };
 
+const PLAIN_VIEWABLE_EXTENSIONS = new Set(VIEWABLE_INPUT_FORMATS.filter((format) => /^[a-z0-9_]+$/.test(format)));
+const PATTERN_VIEWABLE_EXTENSIONS = VIEWABLE_INPUT_FORMATS.filter(
+  (format) => !PLAIN_VIEWABLE_EXTENSIONS.has(format),
+).map((pattern) => new RegExp(`^(?:${pattern})$`, "i"));
+
 export function isViewableInputFormat(sourceName: string): boolean {
-  const basename = sourceName.split(/[\\/]/).at(-1)?.toLowerCase() ?? sourceName.toLowerCase();
+  const basename = sourceName.split(/[\\/]/).at(-1)!.toLowerCase();
   const segments = basename.split(".");
   const candidates = segments.length < 2 ? [] : [segments.at(-1)!, segments.slice(-2).join(".")];
-  return VIEWABLE_INPUT_FORMATS.some((pattern) =>
-    candidates.some((candidate) => new RegExp(`^(?:${pattern})$`, "i").test(candidate)),
+  return candidates.some(
+    (candidate) =>
+      PLAIN_VIEWABLE_EXTENSIONS.has(candidate) ||
+      PATTERN_VIEWABLE_EXTENSIONS.some((pattern) => pattern.test(candidate)),
   );
+}
+
+function translationViews(value: unknown): string[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const views = value.filter((view): view is string => typeof view === "string");
+  return views.length === value.length ? views : null;
 }
 
 function translationFormats(value: unknown): ApsTranslationOutputFormat[] | null {
@@ -200,13 +215,9 @@ function translationFormats(value: unknown): ApsTranslationOutputFormat[] | null
     if (!isRecordObject(candidate)) return null;
     const type = optionalString(candidate.type);
     if (type !== "svf2" && type !== "svf" && type !== "thumbnail") return null;
-    if (
-      candidate.views !== undefined &&
-      (!Array.isArray(candidate.views) || candidate.views.some((view) => typeof view !== "string"))
-    ) {
-      return null;
-    }
-    formats.push({ type, views: (candidate.views as string[] | undefined) ?? [] });
+    const views = translationViews(candidate.views);
+    if (!views) return null;
+    formats.push({ type, views });
   }
   return formats;
 }
@@ -215,12 +226,10 @@ export function modelDerivativeRoutes({ app, store }: RouteContext): void {
   const aps = getApsStore(store);
   const readAuth = apsAuth(store, { scopes: ["data:read"] });
   const writeAuth = apsAuth(store, { scopes: ["data:create", "data:write"] });
-  app.use("/modelderivative/v2/*", (c, next) => (c.req.method === "GET" ? readAuth(c, next) : next()));
-  app.use("/modelderivative/v2/designdata/job", writeAuth);
 
-  app.get("/modelderivative/v2/designdata/formats", (c) => c.json(SUPPORTED_FORMATS));
+  app.get("/modelderivative/v2/designdata/formats", readAuth, (c) => c.json(SUPPORTED_FORMATS));
 
-  app.post("/modelderivative/v2/designdata/job", async (c) => {
+  app.post("/modelderivative/v2/designdata/job", writeAuth, async (c) => {
     const body = await jsonObjectBody(c);
     const input = body && isRecordObject(body.input) ? body.input : null;
     const output = body && isRecordObject(body.output) ? body.output : null;
@@ -237,7 +246,7 @@ export function modelDerivativeRoutes({ app, store }: RouteContext): void {
     const storage = aps.storageObjects.findOneBy("object_id", objectId);
     if (!storage || !storage.uploaded_at) return notFound(c, "The source storage object");
     if (!isViewableInputFormat(storage.name)) {
-      return badInput(c, "input.urn", `The .${storage.name.split(".").at(-1) ?? ""} source format is not viewable.`);
+      return badInput(c, "input.urn", `The .${documentFileType(storage.name)} source format is not viewable.`);
     }
     const force = c.req.header("x-ads-force")?.toLowerCase() === "true";
     const result = enqueueTranslation(aps, store, {
@@ -248,15 +257,15 @@ export function modelDerivativeRoutes({ app, store }: RouteContext): void {
     });
     return c.json(
       {
-        result: "created",
+        result: result.created ? "created" : "success",
         urn,
         acceptedJobs: { output: formats.map((format) => ({ destination: { region: "us" }, formats: [format] })) },
       },
-      result.created ? 200 : 201,
+      result.created ? 201 : 200,
     );
   });
 
-  app.get("/modelderivative/v2/designdata/:urn/manifest", async (c) => {
+  app.get("/modelderivative/v2/designdata/:urn/manifest", readAuth, async (c) => {
     const job = aps.translationJobs.findOneBy("urn", c.req.param("urn"));
     if (job) {
       const refreshed = await refreshTranslationJob(aps, store, job);

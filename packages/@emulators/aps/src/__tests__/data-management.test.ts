@@ -309,13 +309,27 @@ describe("APS Data Management routes", () => {
   it("validates custom tree parents, item folders, and cycles", () => {
     expect(() =>
       createTestApp({
-        document_folders: [{ id: "urn:folder:orphan", project_id: "b.emulate-project", parent_folder_id: "urn:folder:missing", name: "Orphan" }],
+        document_folders: [
+          {
+            id: "urn:folder:orphan",
+            project_id: "b.emulate-project",
+            parent_folder_id: "urn:folder:missing",
+            name: "Orphan",
+          },
+        ],
       }),
     ).toThrow("references unknown parent 'urn:folder:missing'");
 
     expect(() =>
       createTestApp({
-        document_items: [{ id: "urn:item:orphan", project_id: "b.emulate-project", folder_id: "urn:folder:missing", display_name: "orphan.rvt" }],
+        document_items: [
+          {
+            id: "urn:item:orphan",
+            project_id: "b.emulate-project",
+            folder_id: "urn:folder:missing",
+            display_name: "orphan.rvt",
+          },
+        ],
       }),
     ).toThrow("references unknown folder 'urn:folder:missing'");
 

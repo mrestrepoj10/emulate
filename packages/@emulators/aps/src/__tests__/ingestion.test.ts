@@ -291,7 +291,8 @@ describe("APS ingestion routes", () => {
       headers: { ...bearer(token), "Content-Type": "application/json", "x-ads-force": "true" },
       body: JSON.stringify({ input: { urn }, output: { formats: [{ type: "svf2", views: ["2d", "3d"] }] } }),
     });
-    expect(forced.status).toBe(200);
+    expect(forced.status).toBe(201);
+    expect((await forced.json()) as Record<string, unknown>).toMatchObject({ result: "created", urn });
     expect(getApsStore(setup.store).translationJobs.findOneBy("urn", urn)).toMatchObject({
       status: "pending",
       force_count: 1,
@@ -317,8 +318,8 @@ describe("APS ingestion routes", () => {
         output: { formats: [{ type: "svf2", views: ["3d"] }, { type: "thumbnail" }] },
       }),
     });
-    expect(explicit.status).toBe(201);
-    expect((await explicit.json()) as Record<string, unknown>).toMatchObject({ result: "created", urn });
+    expect(explicit.status).toBe(200);
+    expect((await explicit.json()) as Record<string, unknown>).toMatchObject({ result: "success", urn });
 
     vi.setSystemTime(new Date("2026-08-22T12:00:00.200Z"));
     const active = (await (await setup.app.request(manifestUrl, { headers: bearer(token) })).json()) as Record<

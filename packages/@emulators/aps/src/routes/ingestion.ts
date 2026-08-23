@@ -4,77 +4,34 @@ import { accessTokenForRequest, apsAuth } from "../auth.js";
 import { createDocumentItem, createDocumentVersion, documentFileType, documentMimeType, itemTip } from "../dm-tree.js";
 import { emitDocumentVersionAdded } from "../dm-events.js";
 import type { ApsDocumentItem, ApsDocumentVersion, ApsStorageObject } from "../entities.js";
-import { DEFAULT_USER_EMAIL, isRecordObject, jsonObjectBody, optionalString } from "../helpers.js";
+import { DEFAULT_USER_EMAIL, jsonObjectBody, optionalString } from "../helpers.js";
 import { getTranslationConfig, getUploadConfig } from "../ingestion-config.js";
+import { asRecord, jsonApiCreated, jsonApiError, relationshipId, resourceAttributes, routeId } from "../jsonapi.js";
 import { badInput, forbidden, notFound, payloadTooLarge } from "../problem.js";
 import { issueSignedResourceUrl, validateSignedResource } from "../signed-blobs.js";
 import { getApsStore, type ApsStore } from "../store.js";
 import { enqueueTranslation } from "../translation.js";
 import { documentItemData, documentVersionData } from "./data-management.js";
 
-const JSON_API_TYPE = "application/vnd.api+json";
 const UPLOAD_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SIGNED_URL_TTL_MINUTES = 2;
 const MAX_UPLOAD_PARTS = 100;
 
-function decodeRouteValue(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return isRecordObject(value) ? value : null;
-}
-
-function relationshipId(resource: Record<string, unknown>, name: string): string | undefined {
-  const relationships = record(resource.relationships);
-  const relationship = relationships ? record(relationships[name]) : null;
-  const data = relationship ? record(relationship.data) : null;
-  return data ? optionalString(data.id) : undefined;
-}
-
-function attributes(resource: Record<string, unknown>): Record<string, unknown> {
-  return record(resource.attributes) ?? {};
-}
-
-function jsonApiError(c: Context<AppEnv>, status: 400 | 404 | 409, code: string, detail: string): Response {
-  c.header("Content-Type", JSON_API_TYPE);
-  return c.json(
-    { jsonapi: { version: "1.0" }, errors: [{ id: randomUUID(), status: String(status), code, detail }] },
-    status,
-  );
-}
-
-function jsonApiCreated(c: Context<AppEnv>, self: string, data: unknown, included?: unknown[]): Response {
-  c.header("Content-Type", JSON_API_TYPE);
-  return c.json(
-    {
-      jsonapi: { version: "1.0" },
-      links: { self: { href: self } },
-      data,
-      ...(included ? { included } : {}),
-    },
-    201,
-  );
-}
-
-function storageForId(aps: ApsStore, objectId: string): ApsStorageObject | undefined {
-  return aps.storageObjects.findOneBy("object_id", objectId);
-}
-
-function finalizedStorageForProject(
+function storageForWrite(
+  c: Context<AppEnv>,
   aps: ApsStore,
   projectId: string,
-  objectId: string | undefined,
-): ApsStorageObject | undefined {
-  if (!objectId) return undefined;
-  const storage = storageForId(aps, objectId);
-  return storage?.project_id === projectId && storage.uploaded_at && storage.content_base64 !== null
-    ? storage
-    : undefined;
+  folderId: string,
+  storageId: string | undefined,
+): ApsStorageObject | Response {
+  const storage = storageId ? aps.storageObjects.findOneBy("object_id", storageId) : undefined;
+  if (!storage || storage.project_id !== projectId || !storage.uploaded_at || storage.content_base64 === null) {
+    return jsonApiError(c, 400, "BAD_INPUT", "The storage relationship must reference a finalized object.");
+  }
+  if (storage.folder_id !== folderId) {
+    return jsonApiError(c, 400, "BAD_INPUT", "The storage object must target the item's parent folder.");
+  }
+  return storage;
 }
 
 async function actorForRequest(c: Context<AppEnv>, store: RouteContext["store"], aps: ApsStore) {
@@ -84,7 +41,7 @@ async function actorForRequest(c: Context<AppEnv>, store: RouteContext["store"],
 }
 
 function itemVersionId(itemId: string, versionNumber: number): string {
-  const lineage = itemId.split(":").at(-1) ?? randomUUID();
+  const lineage = itemId.split(":").at(-1)!;
   return `urn:adsk.wipprod:fs.file:vf.${lineage}?version=${versionNumber}`;
 }
 
@@ -140,16 +97,15 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
   const writeAuth = apsAuth(store, { scopes: ["data:create", "data:write"] });
   const userWriteAuth = apsAuth(store, { scopes: ["data:create", "data:write"], requireUser: true });
 
-  app.use("/data/v1/*", (c, next) => (c.req.method === "POST" ? userWriteAuth(c, next) : next()));
   app.use("/oss/v2/buckets/*", writeAuth);
 
-  app.post("/data/v1/projects/:projectId/storage", async (c) => {
-    const projectId = decodeRouteValue(c.req.param("projectId"));
+  app.post("/data/v1/projects/:projectId/storage", userWriteAuth, async (c) => {
+    const projectId = routeId(c.req.param("projectId"));
     if (!aps.projects.findOneBy("project_id", projectId))
       return jsonApiError(c, 404, "NOT_FOUND", "The project was not found.");
     const body = await jsonObjectBody(c);
-    const data = body ? record(body.data) : null;
-    const name = data ? optionalString(attributes(data).name) : undefined;
+    const data = body ? asRecord(body.data) : null;
+    const name = data ? optionalString(resourceAttributes(data).name) : undefined;
     const folderId = data ? relationshipId(data, "target") : undefined;
     const folder = folderId ? aps.documentFolders.findOneBy("folder_id", folderId) : undefined;
     if (!data || data.type !== "objects" || !name || !folderId) {
@@ -184,8 +140,8 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
   });
 
   app.get("/oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload", (c) => {
-    const bucketKey = decodeRouteValue(c.req.param("bucketKey"));
-    const objectKey = decodeRouteValue(c.req.param("objectKey"));
+    const bucketKey = routeId(c.req.param("bucketKey"));
+    const objectKey = routeId(c.req.param("objectKey"));
     const storage = aps.storageObjects
       .findBy("bucket_key", bucketKey)
       .find((candidate) => candidate.object_key === objectKey);
@@ -198,9 +154,13 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
     if (!/^\d+$/.test(minutesValue) || Number(minutesValue) < 1 || Number(minutesValue) > 60) {
       return badInput(c, "minutesExpiration", "minutesExpiration must be an integer from 1 through 60.");
     }
+    const now = Date.now();
+    for (const session of aps.uploadSessions.all()) {
+      if (Date.parse(session.expires_at) <= now) aps.uploadSessions.delete(session.id);
+    }
     const expectedParts = Number(partsValue);
     const uploadKey = randomUUID();
-    const expiresAt = new Date(Date.now() + UPLOAD_SESSION_TTL_MS).toISOString();
+    const expiresAt = new Date(now + UPLOAD_SESSION_TTL_MS).toISOString();
     const ttlMs = Number(minutesValue) * 60_000;
     aps.uploadSessions.insert({
       upload_key: uploadKey,
@@ -223,7 +183,7 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
     return c.json({
       uploadKey,
       urls,
-      urlExpiration: new Date(Date.now() + ttlMs).toISOString(),
+      urlExpiration: new Date(now + ttlMs).toISOString(),
       uploadExpiration: expiresAt,
     });
   });
@@ -262,8 +222,8 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
   });
 
   app.post("/oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload", async (c) => {
-    const bucketKey = decodeRouteValue(c.req.param("bucketKey"));
-    const objectKey = decodeRouteValue(c.req.param("objectKey"));
+    const bucketKey = routeId(c.req.param("bucketKey"));
+    const objectKey = routeId(c.req.param("objectKey"));
     const body = await jsonObjectBody(c);
     const uploadKey = body ? optionalString(body.uploadKey) : undefined;
     if (!uploadKey) return badInput(c, "uploadKey", "uploadKey is required.");
@@ -299,19 +259,19 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
     });
   });
 
-  app.post("/data/v1/projects/:projectId/items", async (c) => {
-    const projectId = decodeRouteValue(c.req.param("projectId"));
+  app.post("/data/v1/projects/:projectId/items", userWriteAuth, async (c) => {
+    const projectId = routeId(c.req.param("projectId"));
     if (!aps.projects.findOneBy("project_id", projectId))
       return jsonApiError(c, 404, "NOT_FOUND", "The project was not found.");
     const body = await jsonObjectBody(c);
-    const data = body ? record(body.data) : null;
-    const included = body && Array.isArray(body.included) ? body.included.map(record).filter(Boolean) : [];
+    const data = body ? asRecord(body.data) : null;
+    const included = body && Array.isArray(body.included) ? body.included.map(asRecord).filter(Boolean) : [];
     const includedVersion = included.find((entry) => entry?.type === "versions") ?? null;
     const folderId = data ? relationshipId(data, "parent") : undefined;
     const displayName = data
-      ? (optionalString(attributes(data).displayName) ?? optionalString(attributes(data).name))
+      ? (optionalString(resourceAttributes(data).displayName) ?? optionalString(resourceAttributes(data).name))
       : undefined;
-    const versionName = includedVersion ? optionalString(attributes(includedVersion).name) : undefined;
+    const versionName = includedVersion ? optionalString(resourceAttributes(includedVersion).name) : undefined;
     const storageId = includedVersion ? relationshipId(includedVersion, "storage") : undefined;
     if (!data || data.type !== "items" || !includedVersion || !folderId || !(displayName ?? versionName)) {
       return jsonApiError(c, 400, "BAD_INPUT", "An item with a parent folder and included first version is required.");
@@ -323,12 +283,8 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
     if (aps.documentItems.findBy("folder_id", folderId).some((item) => item.display_name === name)) {
       return jsonApiError(c, 409, "CONFLICT", "An item with this name already exists in the folder.");
     }
-    const storage = finalizedStorageForProject(aps, projectId, storageId);
-    if (!storage)
-      return jsonApiError(c, 400, "BAD_INPUT", "The storage relationship must reference a finalized object.");
-    if (storage.folder_id !== folderId) {
-      return jsonApiError(c, 400, "BAD_INPUT", "The storage object must target the item's parent folder.");
-    }
+    const storage = storageForWrite(c, aps, projectId, folderId, storageId);
+    if (storage instanceof Response) return storage;
     const actor = await actorForRequest(c, store, aps);
     const now = new Date().toISOString();
     const item = createDocumentItem(aps, {
@@ -349,20 +305,18 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
       last_modified_time: now,
       extension_type: "items:autodesk.bim360:File",
     });
-    const version = createDocumentVersion(aps, versionValues(item, storage, 1, actor, versionName ?? name), {
-      requireDerivative: false,
-    });
+    const version = createDocumentVersion(aps, versionValues(item, storage, 1, actor, versionName ?? name));
     await finishVersionWrite(aps, store, version);
     const self = `${baseUrl}/data/v1/projects/${encodeURIComponent(projectId)}/items/${encodeURIComponent(item.item_id)}`;
     return jsonApiCreated(c, self, documentItemData(baseUrl, aps, item), [documentVersionData(baseUrl, version)]);
   });
 
-  app.post("/data/v1/projects/:projectId/versions", async (c) => {
-    const projectId = decodeRouteValue(c.req.param("projectId"));
+  app.post("/data/v1/projects/:projectId/versions", userWriteAuth, async (c) => {
+    const projectId = routeId(c.req.param("projectId"));
     if (!aps.projects.findOneBy("project_id", projectId))
       return jsonApiError(c, 404, "NOT_FOUND", "The project was not found.");
     const body = await jsonObjectBody(c);
-    const data = body ? record(body.data) : null;
+    const data = body ? asRecord(body.data) : null;
     const itemId = data ? relationshipId(data, "item") : undefined;
     const storageId = data ? relationshipId(data, "storage") : undefined;
     const item = itemId ? aps.documentItems.findOneBy("item_id", itemId) : undefined;
@@ -370,19 +324,16 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
       return jsonApiError(c, 400, "BAD_INPUT", "A version with item and storage relationships is required.");
     }
     if (!item || item.project_id !== projectId) return jsonApiError(c, 404, "NOT_FOUND", "The item was not found.");
-    const storage = finalizedStorageForProject(aps, projectId, storageId);
-    if (!storage)
-      return jsonApiError(c, 400, "BAD_INPUT", "The storage relationship must reference a finalized object.");
-    if (storage.folder_id !== item.folder_id) {
-      return jsonApiError(c, 400, "BAD_INPUT", "The storage object must target the item's parent folder.");
-    }
+    const storage = storageForWrite(c, aps, projectId, item.folder_id, storageId);
+    if (storage instanceof Response) return storage;
     const actor = await actorForRequest(c, store, aps);
     const latest = itemTip(aps, item.item_id);
     const number = (latest?.version_number ?? 0) + 1;
-    const name = optionalString(attributes(data).name) ?? optionalString(attributes(data).displayName) ?? storage.name;
-    const version = createDocumentVersion(aps, versionValues(item, storage, number, actor, name), {
-      requireDerivative: false,
-    });
+    const name =
+      optionalString(resourceAttributes(data).name) ??
+      optionalString(resourceAttributes(data).displayName) ??
+      storage.name;
+    const version = createDocumentVersion(aps, versionValues(item, storage, number, actor, name));
     aps.documentItems.update(item.id, {
       display_name: name,
       last_modified_by: actor.id,
