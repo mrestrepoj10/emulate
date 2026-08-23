@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { Store } from "@emulators/core";
 import type {
   ApsManifestDerivative,
@@ -7,14 +6,15 @@ import type {
   ApsTranslationOutputFormat,
 } from "./entities.js";
 import { documentFileType } from "./dm-tree.js";
+import { stableDerivativeGuid } from "./helpers.js";
 import { getTranslationConfig } from "./ingestion-config.js";
 import type { ApsStore } from "./store.js";
 import { simulateWebhookEvent, type ApsWebhookEventInput } from "./webhooks.js";
 
-export interface TranslationManifest {
+export interface DerivativeManifest {
   type: string;
   hasThumbnail: string;
-  status: ApsTranslationJobStatus;
+  status: string;
   progress: string;
   region: string;
   urn: string;
@@ -93,8 +93,7 @@ function successfulDerivative(job: ApsTranslationJob, format: ApsTranslationOutp
   if (format.type === "thumbnail") {
     return { name: job.source_name, status: "success", progress: "complete", outputType: "thumbnail" };
   }
-  const digest = createHash("sha1").update(`${job.urn}:${format.type}`).digest("hex");
-  const guid = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+  const guid = stableDerivativeGuid(`${job.urn}:3d`);
   return {
     name: job.source_name,
     status: "success",
@@ -144,7 +143,7 @@ function derivativesForJob(job: ApsTranslationJob): ApsManifestDerivative[] {
   }
 }
 
-export function manifestForJob(job: ApsTranslationJob): TranslationManifest {
+export function manifestForJob(job: ApsTranslationJob): DerivativeManifest {
   return {
     type: "manifest",
     hasThumbnail: String(job.output_formats.some((format) => format.type === "thumbnail")),

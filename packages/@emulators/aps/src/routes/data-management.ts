@@ -259,6 +259,16 @@ function projectForDataRoute(aps: ApsStore, projectId: string): ApsProject | und
   return aps.projects.findOneBy("project_id", routeId(projectId));
 }
 
+function folderForDataRoute(c: Context<AppEnv>, aps: ApsStore): ApsDocumentFolder | Response {
+  const project = projectForDataRoute(aps, c.req.param("projectId"));
+  const folderId = routeId(c.req.param("folderId"));
+  const folder = aps.documentFolders.findOneBy("folder_id", folderId);
+  if (!project || !folder || folder.project_id !== project.project_id) {
+    return jsonApiNotFound(c, `The folder ${folderId} was not found in project ${c.req.param("projectId")}.`);
+  }
+  return folder;
+}
+
 function queryValues(c: Context<AppEnv>, name: string): string[] {
   return (c.req.queries(name) ?? []).flatMap((value) => value.split(",")).filter(Boolean);
 }
@@ -358,22 +368,14 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
   });
 
   app.get("/data/v1/projects/:projectId/folders/:folderId", auth, (c) => {
-    const project = projectForDataRoute(aps, c.req.param("projectId"));
-    const folderId = routeId(c.req.param("folderId"));
-    const folder = aps.documentFolders.findOneBy("folder_id", folderId);
-    if (!project || !folder || folder.project_id !== project.project_id) {
-      return jsonApiNotFound(c, `The folder ${folderId} was not found in project ${c.req.param("projectId")}.`);
-    }
+    const folder = folderForDataRoute(c, aps);
+    if (folder instanceof Response) return folder;
     return jsonApiDocument(c, requestHref(c, baseUrl), folderData(baseUrl, aps, folder));
   });
 
   app.get("/data/v1/projects/:projectId/folders/:folderId/contents", auth, (c) => {
-    const project = projectForDataRoute(aps, c.req.param("projectId"));
-    const folderId = routeId(c.req.param("folderId"));
-    const folder = aps.documentFolders.findOneBy("folder_id", folderId);
-    if (!project || !folder || folder.project_id !== project.project_id) {
-      return jsonApiNotFound(c, `The folder ${folderId} was not found in project ${c.req.param("projectId")}.`);
-    }
+    const folder = folderForDataRoute(c, aps);
+    if (folder instanceof Response) return folder;
     const parsedPage = pagination(c);
     if (typeof parsedPage === "string") return jsonApiError(c, 400, "BAD_INPUT", parsedPage);
     const types = queryValues(c, "filter[type]");
@@ -415,21 +417,17 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
   });
 
   app.get("/data/v1/projects/:projectId/folders/:folderId/search", auth, (c) => {
-    const project = projectForDataRoute(aps, c.req.param("projectId"));
-    const folderId = routeId(c.req.param("folderId"));
-    const folder = aps.documentFolders.findOneBy("folder_id", folderId);
-    if (!project || !folder || folder.project_id !== project.project_id) {
-      return jsonApiNotFound(c, `The folder ${folderId} was not found in project ${c.req.param("projectId")}.`);
-    }
+    const folder = folderForDataRoute(c, aps);
+    if (folder instanceof Response) return folder;
     const parsedPage = pagination(c);
     if (typeof parsedPage === "string") return jsonApiError(c, 400, "BAD_INPUT", parsedPage);
     const name = c.req.query("filter[attributes.displayName]")?.toLocaleLowerCase() ?? "";
     const fileTypes = queryValues(c, "filter[fileType]")
       .map((value) => value.trim().toLocaleLowerCase().replace(/^\./, ""))
       .filter(Boolean);
-    const folderIds = new Set(folderSubtree(aps, project.project_id, folder.folder_id).map((entry) => entry.folder_id));
+    const folderIds = new Set(folderSubtree(aps, folder.project_id, folder.folder_id).map((entry) => entry.folder_id));
     const items = aps.documentItems
-      .findBy("project_id", project.project_id)
+      .findBy("project_id", folder.project_id)
       .filter((item) => folderIds.has(item.folder_id) && !item.hidden)
       .filter((item) => !name || item.display_name.toLocaleLowerCase().includes(name))
       .filter((item) => {

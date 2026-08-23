@@ -65,6 +65,10 @@ describe("APS derivative read resources", () => {
     expect(first.data.metadata).toMatchObject([{ name: "metadata.rvt", role: "3d" }]);
     const guid = first.data.metadata[0].guid as string;
 
+    const manifestResponse = await setup.app.request(derivativePath(model.urn, "manifest"), { headers });
+    const manifest = (await manifestResponse.json()) as Record<string, any>;
+    expect(manifest.derivatives[0].children[0].guid).toBe(guid);
+
     const treeResponse = await setup.app.request(derivativePath(model.urn, `metadata/${guid}`), { headers });
     expect(treeResponse.status).toBe(200);
     const tree = (await treeResponse.json()) as Record<string, any>;

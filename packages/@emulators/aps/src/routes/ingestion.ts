@@ -1,11 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AppEnv, Context, RouteContext } from "@emulators/core";
 import { accessTokenForRequest, apsAuth } from "../auth.js";
-import { stableDerivativeGuid } from "../derivative-resources.js";
 import { createDocumentItem, createDocumentVersion, documentFileType, documentMimeType, itemTip } from "../dm-tree.js";
 import { emitDocumentVersionAdded } from "../dm-events.js";
 import type { ApsDocumentItem, ApsDocumentVersion, ApsStorageObject } from "../entities.js";
-import { DEFAULT_USER_EMAIL, jsonObjectBody, optionalString } from "../helpers.js";
+import { DEFAULT_USER_EMAIL, jsonObjectBody, optionalString, stableDerivativeGuid } from "../helpers.js";
 import { getTranslationConfig, getUploadConfig } from "../ingestion-config.js";
 import { asRecord, jsonApiCreated, jsonApiError, relationshipId, resourceAttributes, routeId } from "../jsonapi.js";
 import { badInput, forbidden, notFound, payloadTooLarge } from "../problem.js";
@@ -55,6 +54,7 @@ function versionValues(
 ): Omit<ApsDocumentVersion, "id" | "created_at" | "updated_at"> {
   const now = new Date().toISOString();
   const extension = documentFileType(displayName);
+  const bubbleUrn = Buffer.from(storage.object_id).toString("base64url");
   return {
     version_id: itemVersionId(item.item_id, versionNumber),
     item_id: item.item_id,
@@ -66,9 +66,9 @@ function versionValues(
     storage_size: storage.size,
     storage_urn: storage.object_id,
     region: "US",
-    bubble_urn: Buffer.from(storage.object_id).toString("base64url"),
+    bubble_urn: bubbleUrn,
     viewable_id: "emulate-3d-view",
-    viewable_guid: stableDerivativeGuid(`${Buffer.from(storage.object_id).toString("base64url")}:3d`),
+    viewable_guid: stableDerivativeGuid(`${bubbleUrn}:3d`),
     created_by: actor.id,
     created_by_name: actor.name,
     create_time: now,
@@ -98,10 +98,6 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
   const readAuth = apsAuth(store, { scopes: ["data:read"] });
   const writeAuth = apsAuth(store, { scopes: ["data:create", "data:write"] });
   const userWriteAuth = apsAuth(store, { scopes: ["data:create", "data:write"], requireUser: true });
-
-  app.use("/oss/v2/buckets/*", (c, next) =>
-    c.req.path.endsWith("/signeds3download") ? readAuth(c, next) : writeAuth(c, next),
-  );
 
   app.post("/data/v1/projects/:projectId/storage", userWriteAuth, async (c) => {
     const projectId = routeId(c.req.param("projectId"));
@@ -143,7 +139,7 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
     });
   });
 
-  app.get("/oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload", (c) => {
+  app.get("/oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload", writeAuth, (c) => {
     const bucketKey = routeId(c.req.param("bucketKey"));
     const objectKey = routeId(c.req.param("objectKey"));
     const storage = aps.storageObjects
@@ -225,7 +221,7 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
     return c.body(null, 200, { ETag: createHash("sha1").update(bytes).digest("hex") });
   });
 
-  app.post("/oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload", async (c) => {
+  app.post("/oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload", writeAuth, async (c) => {
     const bucketKey = routeId(c.req.param("bucketKey"));
     const objectKey = routeId(c.req.param("objectKey"));
     const body = await jsonObjectBody(c);
@@ -263,7 +259,7 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
     });
   });
 
-  app.post("/oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3download", (c) => {
+  app.post("/oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3download", readAuth, (c) => {
     const bucketKey = routeId(c.req.param("bucketKey"));
     const objectKey = routeId(c.req.param("objectKey"));
     const storage = aps.storageObjects

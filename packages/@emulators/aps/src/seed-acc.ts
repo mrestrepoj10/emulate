@@ -390,6 +390,9 @@ export function seedAccFromConfig(aps: ApsStore, config: ApsSeedConfig): void {
       tags: structuredClone(sheet.tags ?? []),
       is_current: sheet.is_current ?? true,
       deleted,
+      upload_file_name: sheet.upload_file_name ?? "",
+      viewable_urn: sheet.viewable_urn ?? "",
+      viewable_guid: sheet.viewable_guid ?? "",
       payload: {
         id: sheet.id,
         number: sheet.number,

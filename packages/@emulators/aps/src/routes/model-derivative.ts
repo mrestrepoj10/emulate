@@ -1,10 +1,12 @@
-import type { RouteContext } from "@emulators/core";
+import type { AppEnv, Context, RouteContext } from "@emulators/core";
 import { apsAuth } from "../auth.js";
 import {
   derivativeObjectTree,
   derivativeProperties,
   metadataViews,
   resolveDerivative,
+  type DerivativeSource,
+  type MetadataView,
 } from "../derivative-resources.js";
 import { documentFileType } from "../dm-tree.js";
 import type { ApsTranslationOutputFormat } from "../entities.js";
@@ -291,12 +293,21 @@ export function modelDerivativeRoutes({ app, store }: RouteContext): void {
     return c.json({ result: "success" });
   });
 
-  app.get("/modelderivative/v2/designdata/:urn/thumbnail", readAuth, async (c) => {
-    const derivative = await resolveDerivative(aps, store, c.req.param("urn"));
-    if (derivative.state === "missing" || derivative.state === "failed") {
-      return notFound(c, "The requested derivative");
-    }
-    if (derivative.state === "pending") return c.body(null, 202, { "Retry-After": "1" });
+  const inspectionRoute = (
+    path: string,
+    handler: (c: Context<AppEnv>, source: DerivativeSource) => Response | Promise<Response>,
+  ) =>
+    app.get(path, readAuth, async (c) => {
+      const derivative = await resolveDerivative(aps, store, c.req.param("urn"));
+      if (derivative.state === "pending") return c.body(null, 202, { "Retry-After": "1" });
+      if (derivative.state !== "success") return notFound(c, "The requested derivative");
+      return handler(c, derivative.source);
+    });
+
+  const viewForRequest = (c: Context<AppEnv>, source: DerivativeSource): MetadataView | undefined =>
+    metadataViews(aps, source).find((candidate) => candidate.guid === c.req.param("guid"));
+
+  inspectionRoute("/modelderivative/v2/designdata/:urn/thumbnail", () => {
     return new Response(THUMBNAIL_PNG, {
       status: 200,
       headers: {
@@ -306,53 +317,36 @@ export function modelDerivativeRoutes({ app, store }: RouteContext): void {
     });
   });
 
-  app.get("/modelderivative/v2/designdata/:urn/metadata", readAuth, async (c) => {
-    const derivative = await resolveDerivative(aps, store, c.req.param("urn"));
-    if (derivative.state === "missing" || derivative.state === "failed") {
-      return notFound(c, "The requested derivative");
-    }
-    if (derivative.state === "pending") return c.body(null, 202, { "Retry-After": "1" });
-    return c.json({
+  inspectionRoute("/modelderivative/v2/designdata/:urn/metadata", (c, source) =>
+    c.json({
       data: {
         type: "metadata",
-        metadata: metadataViews(aps, derivative.source),
+        metadata: metadataViews(aps, source),
       },
-    });
-  });
+    }),
+  );
 
-  app.get("/modelderivative/v2/designdata/:urn/metadata/:guid", readAuth, async (c) => {
-    const derivative = await resolveDerivative(aps, store, c.req.param("urn"));
-    if (derivative.state === "missing" || derivative.state === "failed") {
-      return notFound(c, "The requested derivative");
-    }
-    if (derivative.state === "pending") return c.body(null, 202, { "Retry-After": "1" });
-    const view = metadataViews(aps, derivative.source).find((candidate) => candidate.guid === c.req.param("guid"));
+  inspectionRoute("/modelderivative/v2/designdata/:urn/metadata/:guid", (c, source) => {
+    const view = viewForRequest(c, source);
     if (!view) return notFound(c, "The requested model view");
     return c.json({
       data: {
         type: "objects",
-        objects: derivativeObjectTree(derivative.source, view),
+        objects: derivativeObjectTree(source, view),
       },
     });
   });
 
-  app.get("/modelderivative/v2/designdata/:urn/metadata/:guid/properties", readAuth, async (c) => {
-    const derivative = await resolveDerivative(aps, store, c.req.param("urn"));
-    if (derivative.state === "missing" || derivative.state === "failed") {
-      return notFound(c, "The requested derivative");
-    }
-    if (derivative.state === "pending") return c.body(null, 202, { "Retry-After": "1" });
-    const view = metadataViews(aps, derivative.source).find((candidate) => candidate.guid === c.req.param("guid"));
+  inspectionRoute("/modelderivative/v2/designdata/:urn/metadata/:guid/properties", (c, source) => {
+    const view = viewForRequest(c, source);
     if (!view) return notFound(c, "The requested model view");
     const objectIdValue = c.req.query("objectid");
     if (objectIdValue !== undefined && (!/^\d+$/.test(objectIdValue) || Number(objectIdValue) < 1)) {
       return badInput(c, "objectid", "objectid must be a positive integer.");
     }
-    const properties = derivativeProperties(
-      derivative.source,
-      view,
-      derivativeObjectTree(derivative.source, view),
-    ).filter((entry) => objectIdValue === undefined || entry.objectid === Number(objectIdValue));
+    const properties = derivativeProperties(source, view, derivativeObjectTree(source, view)).filter(
+      (entry) => objectIdValue === undefined || entry.objectid === Number(objectIdValue),
+    );
     return c.json({
       data: {
         type: "properties",

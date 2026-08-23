@@ -71,6 +71,11 @@ export function analyticsIdFor(userId: string): string {
   return createHash("sha256").update(userId).digest("hex").slice(0, 32);
 }
 
+export function stableDerivativeGuid(value: string): string {
+  const digest = createHash("sha1").update(value).digest("hex");
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+}
+
 export function isRecordObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
