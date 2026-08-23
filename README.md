@@ -977,7 +977,7 @@ Current Twilio limits: no carrier delivery, A2P 10DLC, toll-free verification, r
 
 ## Autodesk Platform Services (APS)
 
-Autodesk Platform Services (formerly Forge) emulation with authentication v2, Data Management, Model Derivative, core Autodesk Construction Cloud workflow reads including Model Coordination, and active Webhooks delivery. Every protected route verifies the emulator's RS256 access tokens, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by APS routes.
+Autodesk Platform Services (formerly Forge) emulation with authentication v2, Data Management reads, recursive search and signed transfers, Model Derivative translation and inspection, core Autodesk Construction Cloud workflow reads including Model Coordination, and active Webhooks delivery. Every protected route verifies the emulator's RS256 access tokens, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by APS routes.
 
 - `GET /.well-known/openid-configuration` - OIDC discovery document
 - `GET /authentication/v2/keys` - JSON Web Key Set (JWKS)
@@ -994,6 +994,7 @@ Autodesk Platform Services (formerly Forge) emulation with authentication v2, Da
 - `GET /project/v1/hubs/:hubId/projects/:projectId/topFolders` - list a project's top folders
 - `GET /data/v1/projects/:projectId/folders/:folderId` - get a folder
 - `GET /data/v1/projects/:projectId/folders/:folderId/contents` - list mixed child folders and items with included tips
+- `GET /data/v1/projects/:projectId/folders/:folderId/search` - recursively search descendant items with included tips
 - `GET /data/v1/projects/:projectId/items/:itemId` - get an item with its included tip
 - `GET /data/v1/projects/:projectId/items/:itemId/versions` - list an item's version history
 - `GET /data/v1/projects/:projectId/items/:itemId/tip` - get an item's tip version
@@ -1001,11 +1002,18 @@ Autodesk Platform Services (formerly Forge) emulation with authentication v2, Da
 - `POST /data/v1/projects/:projectId/storage` - allocate project storage for an upload
 - `GET/POST /oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload` - issue and complete signed upload URLs
 - `PUT /oss/v2/signed-upload/:uploadKey/:part` - upload raw bytes using only the signed URL
+- `POST /oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3download` - issue a signed download URL
+- `GET /oss/v2/signed-download/:token` - download stored bytes using only the signed URL
 - `POST /data/v1/projects/:projectId/items` - create an item and its first version
 - `POST /data/v1/projects/:projectId/versions` - add the next version to an item
 - `GET /modelderivative/v2/designdata/formats` - list translation formats with a 2-legged or 3-legged token
 - `POST /modelderivative/v2/designdata/job` - start or force a simulated translation job
 - `GET /modelderivative/v2/designdata/:urn/manifest` - get a seeded or live translation manifest
+- `DELETE /modelderivative/v2/designdata/:urn/manifest` - remove a manifest and its simulated derivatives
+- `GET /modelderivative/v2/designdata/:urn/thumbnail` - get a deterministic PNG placeholder
+- `GET /modelderivative/v2/designdata/:urn/metadata` - list deterministic model views
+- `GET /modelderivative/v2/designdata/:urn/metadata/:guid` - get a deterministic object tree
+- `GET /modelderivative/v2/designdata/:urn/metadata/:guid/properties` - get deterministic bulk properties
 - `GET /construction/issues/v1/projects/:projectId/users/me` - get current-user Issues permissions
 - `GET /construction/issues/v1/projects/:projectId/issue-types` - list issue types
 - `GET /construction/issues/v1/projects/:projectId/issues` - list and filter issues
@@ -1221,7 +1229,30 @@ MANIFEST_URL=$(curl -s "$TIP_URL" -H "$AUTH" | jq -r '.data.relationships.deriva
 curl "$MANIFEST_URL" -H "$AUTH"
 ```
 
-Folder contents supports `filter[type]`, `filter[extension.type]`, and zero-based `page[number]` with `page[limit]` up to 200. Item reads include their tip, and version histories are returned newest first.
+Folder contents supports `filter[type]`, `filter[extension.type]`, and zero-based `page[number]` with `page[limit]` up to 200. Recursive folder search returns items only with their tip versions in `included`; use `filter[attributes.displayName]` for case-insensitive contains matching and `filter[fileType]` for comma-separated extensions. Item reads include their tip, and version histories are returned newest first.
+
+```bash
+ROOT_FOLDER_ID="urn:adsk.wipprod:fs.folder:co.emulate-documents"
+curl "$APS_URL/data/v1/projects/b.emulate-project/folders/$ROOT_FOLDER_ID/search?filter%5Battributes.displayName%5D=sample&filter%5BfileType%5D=rvt" \
+  -H "$AUTH"
+```
+
+Finalized uploaded objects support `signeds3download`. Its signed GET URL needs no bearer token and returns the exact stored bytes with the recorded content length.
+
+### APS Model Derivative
+
+Manifest, thumbnail, and metadata reads accept a 2-legged or 3-legged `data:read` token. Thumbnail and metadata endpoints return `202` while a live translation is active. Successful reads expose a deterministic placeholder PNG plus stable synthetic view GUIDs, object trees, and small property bags.
+
+```bash
+SAMPLE_URN="dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA"
+METADATA=$(curl -s "$APS_URL/modelderivative/v2/designdata/$SAMPLE_URN/metadata" \
+  -H "Authorization: Bearer <2-legged-access-token>")
+VIEW_GUID=$(printf '%s' "$METADATA" | jq -r '.data.metadata[0].guid')
+curl "$APS_URL/modelderivative/v2/designdata/$SAMPLE_URN/metadata/$VIEW_GUID/properties" \
+  -H "Authorization: Bearer <2-legged-access-token>"
+```
+
+Manifest deletion requires `data:write`; posting a new job for an uploaded source restores it. Metadata fixtures are not a complete property database, and the emulator never serves viewable geometry.
 
 ### APS Model Coordination
 
@@ -1273,7 +1304,7 @@ Every callback includes an `x-adsk-delivery-id`. Signed callbacks also include `
 
 Retries, deactivation after five failed events, and up to five auto-reactivation trials are implemented on a compressed configurable clock. The default retry count remains eight, while millisecond timing fields let the complete lifecycle run during local and CI tests. Folder hooks match seeded descendants recursively. Filters support `$[?()]` comparisons, `in [...]`, `&&`, `||`, and an array of filters combined with AND.
 
-Current APS limits: Data Management writes, storage and OSS routes, Commands, search, and refs; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; callback URL verification; rate limits; and the real token propagation delay are not included yet.
+Current APS limits: general Data Management mutations beyond the supported upload/version workflow, Commands, refs, batch downloads, and app-owned bucket management; Model Derivative geometry, derivative files, specific-property query POSTs, and uncommon output formats; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; callback URL verification; rate limits; and the real token propagation delay are not included yet.
 
 ## Apple Sign In
 

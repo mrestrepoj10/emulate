@@ -1,11 +1,22 @@
 import type { RouteContext } from "@emulators/core";
 import { apsAuth } from "../auth.js";
+import {
+  derivativeObjectTree,
+  derivativeProperties,
+  metadataViews,
+  resolveDerivative,
+} from "../derivative-resources.js";
 import { documentFileType } from "../dm-tree.js";
 import type { ApsTranslationOutputFormat } from "../entities.js";
 import { isRecordObject, jsonObjectBody, optionalString } from "../helpers.js";
 import { badInput, notFound } from "../problem.js";
 import { getApsStore } from "../store.js";
-import { enqueueTranslation, manifestForJob, refreshTranslationJob } from "../translation.js";
+import { enqueueTranslation } from "../translation.js";
+
+const THUMBNAIL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
 
 export const VIEWABLE_INPUT_FORMATS = [
   "3dm",
@@ -226,6 +237,7 @@ export function modelDerivativeRoutes({ app, store }: RouteContext): void {
   const aps = getApsStore(store);
   const readAuth = apsAuth(store, { scopes: ["data:read"] });
   const writeAuth = apsAuth(store, { scopes: ["data:create", "data:write"] });
+  const deleteAuth = apsAuth(store, { scopes: ["data:write"] });
 
   app.get("/modelderivative/v2/designdata/formats", readAuth, (c) => c.json(SUPPORTED_FORMATS));
 
@@ -266,22 +278,86 @@ export function modelDerivativeRoutes({ app, store }: RouteContext): void {
   });
 
   app.get("/modelderivative/v2/designdata/:urn/manifest", readAuth, async (c) => {
-    const job = aps.translationJobs.findOneBy("urn", c.req.param("urn"));
-    if (job) {
-      const refreshed = await refreshTranslationJob(aps, store, job);
-      return c.json(manifestForJob(refreshed));
+    const derivative = await resolveDerivative(aps, store, c.req.param("urn"));
+    return derivative.state === "missing" ? c.body(null, 404) : c.json(derivative.manifest);
+  });
+
+  app.delete("/modelderivative/v2/designdata/:urn/manifest", deleteAuth, (c) => {
+    const urn = c.req.param("urn");
+    const job = aps.translationJobs.findOneBy("urn", urn);
+    const manifest = aps.manifests.findOneBy("urn", urn);
+    if (job) aps.translationJobs.delete(job.id);
+    if (manifest) aps.manifests.delete(manifest.id);
+    return c.json({ result: "success" });
+  });
+
+  app.get("/modelderivative/v2/designdata/:urn/thumbnail", readAuth, async (c) => {
+    const derivative = await resolveDerivative(aps, store, c.req.param("urn"));
+    if (derivative.state === "missing" || derivative.state === "failed") {
+      return notFound(c, "The requested derivative");
     }
-    const manifest = aps.manifests.findOneBy("urn", c.req.param("urn"));
-    if (!manifest) return c.body(null, 404);
+    if (derivative.state === "pending") return c.body(null, 202, { "Retry-After": "1" });
+    return new Response(THUMBNAIL_PNG, {
+      status: 200,
+      headers: {
+        "Content-Type": "image/png",
+        "Content-Length": String(THUMBNAIL_PNG.length),
+      },
+    });
+  });
+
+  app.get("/modelderivative/v2/designdata/:urn/metadata", readAuth, async (c) => {
+    const derivative = await resolveDerivative(aps, store, c.req.param("urn"));
+    if (derivative.state === "missing" || derivative.state === "failed") {
+      return notFound(c, "The requested derivative");
+    }
+    if (derivative.state === "pending") return c.body(null, 202, { "Retry-After": "1" });
     return c.json({
-      type: manifest.type,
-      hasThumbnail: manifest.hasThumbnail,
-      status: manifest.status,
-      progress: manifest.progress,
-      region: manifest.region,
-      urn: manifest.urn,
-      version: manifest.version,
-      derivatives: manifest.derivatives,
+      data: {
+        type: "metadata",
+        metadata: metadataViews(aps, derivative.source),
+      },
+    });
+  });
+
+  app.get("/modelderivative/v2/designdata/:urn/metadata/:guid", readAuth, async (c) => {
+    const derivative = await resolveDerivative(aps, store, c.req.param("urn"));
+    if (derivative.state === "missing" || derivative.state === "failed") {
+      return notFound(c, "The requested derivative");
+    }
+    if (derivative.state === "pending") return c.body(null, 202, { "Retry-After": "1" });
+    const view = metadataViews(aps, derivative.source).find((candidate) => candidate.guid === c.req.param("guid"));
+    if (!view) return notFound(c, "The requested model view");
+    return c.json({
+      data: {
+        type: "objects",
+        objects: derivativeObjectTree(derivative.source, view),
+      },
+    });
+  });
+
+  app.get("/modelderivative/v2/designdata/:urn/metadata/:guid/properties", readAuth, async (c) => {
+    const derivative = await resolveDerivative(aps, store, c.req.param("urn"));
+    if (derivative.state === "missing" || derivative.state === "failed") {
+      return notFound(c, "The requested derivative");
+    }
+    if (derivative.state === "pending") return c.body(null, 202, { "Retry-After": "1" });
+    const view = metadataViews(aps, derivative.source).find((candidate) => candidate.guid === c.req.param("guid"));
+    if (!view) return notFound(c, "The requested model view");
+    const objectIdValue = c.req.query("objectid");
+    if (objectIdValue !== undefined && (!/^\d+$/.test(objectIdValue) || Number(objectIdValue) < 1)) {
+      return badInput(c, "objectid", "objectid must be a positive integer.");
+    }
+    const properties = derivativeProperties(
+      derivative.source,
+      view,
+      derivativeObjectTree(derivative.source, view),
+    ).filter((entry) => objectIdValue === undefined || entry.objectid === Number(objectIdValue));
+    return c.json({
+      data: {
+        type: "properties",
+        collection: properties,
+      },
     });
   });
 }

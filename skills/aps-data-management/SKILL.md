@@ -52,7 +52,8 @@ You are an expert in APS Data Management and OSS. Keep project data, app-owned s
 - Always paginate list calls with `page[number]` and `page[limit]`; the Data Management max page size is `200`.
 - Use `filter[...]` parameters instead of fetching full folder trees when the API supports the desired filter.
 - Treat OSS signed S3 URLs as short-lived. Persist `uploadKey` for retries and always complete the upload, even for a single signed URL.
-- In the local APS emulator, use project storage plus `signeds3upload`; the deprecated direct OSS object PUT is intentionally unavailable. Signed part PUTs need no bearer token, uploaded bytes reset with emulator state, and the default object cap is 25 MB.
+- In the local APS emulator, use project storage plus `signeds3upload`; the deprecated direct OSS object PUT is intentionally unavailable. Signed part PUTs need no bearer token, uploaded bytes reset with emulator state, and the default object cap is 25 MB. Finalized objects support `signeds3download`, whose signed GET URL returns the exact stored bytes and content length.
+- Local recursive folder search requires a 3-legged `data:read` token and returns descendant items with tip versions in `included`. Real APS commonly also requires `data:search`, so keep that scope in production integrations.
 - Choose bucket policy deliberately: `transient` for 24 hours, `temporary` for 30 days, `persistent` until deletion.
 - Preserve region consistency between OSS storage, Data Management storage, Model Derivative translation, and Viewer configuration.
 - For Model Derivative handoff, convert the final OSS object ID to a URL-safe Base64 URN; do not pass raw object IDs.
@@ -75,7 +76,7 @@ You are an expert in APS Data Management and OSS. Keep project data, app-owned s
 2. Choose token flow and minimum scopes: `data:read`, `data:create`, `data:write`, `data:search`, or `bucket:*` only as needed.
 3. For project data, discover hub, project, top folder, folder contents, item, and version with pagination and filters.
 4. For uploads, create storage, request signed S3 parts, PUT every raw part, complete with `uploadKey`, then create the item or new version. The local emulator emits `dm.version.added` automatically.
-5. For downloads, resolve the version and storage object, request a signed S3 download, or create a format download job.
+5. For downloads, resolve the version and storage object, request a signed S3 download, or create a format download job. Local signed GET targets need no bearer token and expire with their URL signature.
 6. Use commands for permissions, bulk item/ref lookup, and C4R publish workflows.
 7. Hand other APS skills only the narrow artifact they need: project IDs, folder/item/version IDs, object IDs, or Base64 derivative URNs.
 

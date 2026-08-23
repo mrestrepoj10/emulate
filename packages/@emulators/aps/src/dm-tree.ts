@@ -161,6 +161,28 @@ export function folderAncestors(aps: ApsStore, projectId: string, folderId: stri
   return ancestors;
 }
 
+export function folderSubtree(aps: ApsStore, projectId: string, folderId: string): ApsDocumentFolder[] {
+  const root = aps.documentFolders.findOneBy("folder_id", folderId);
+  if (!root || root.project_id !== projectId) return [];
+  const folders: ApsDocumentFolder[] = [];
+  const pending = [root];
+  const visited = new Set<string>();
+  for (let index = 0; index < pending.length; index += 1) {
+    const folder = pending[index]!;
+    if (visited.has(folder.folder_id)) {
+      throw new Error(`APS document folder tree contains a cycle at '${folder.folder_id}'.`);
+    }
+    visited.add(folder.folder_id);
+    folders.push(folder);
+    pending.push(
+      ...aps.documentFolders
+        .findBy("parent_folder_id", folder.folder_id)
+        .filter((candidate) => candidate.project_id === projectId),
+    );
+  }
+  return folders;
+}
+
 export function documentItemForVersion(aps: ApsStore, version: ApsDocumentVersion): ApsDocumentItem | undefined {
   const item = aps.documentItems.findOneBy("item_id", version.item_id);
   return item?.project_id === version.project_id ? item : undefined;

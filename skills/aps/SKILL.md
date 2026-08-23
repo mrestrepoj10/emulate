@@ -1,12 +1,12 @@
 ---
 name: aps
-description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management reads and signed-S3 uploads, simulated Model Derivative translation, Autodesk Construction Cloud workflow reads including Model Coordination, and active Webhooks for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs, projects, folder trees, item histories, file uploads, translation jobs, manifests, Issues, RFIs, Sheets, model sets, clash tests, expiring clash resources, webhook subscriptions, signed callback delivery, retry lifecycle testing, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Data Management folders", "Data Management uploads", "Data Management versions", "Model Derivative job", "Model Derivative manifest", "ACC Issues", "ACC RFIs", "ACC Sheets", "Model Coordination", "clash test", "APS webhooks", "dm.version.added", "extraction.finished", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
+description: Emulated Autodesk Platform Services (APS) OAuth 2.0, Data Management reads, recursive search and signed-S3 transfers, simulated Model Derivative translation and inspection, Autodesk Construction Cloud workflow reads including Model Coordination, and active Webhooks for local development and testing. Use when the user needs Autodesk sign-in, APS token exchange, local hubs, projects, folder trees, item histories, file uploads or downloads, project file search, translation jobs, manifests, thumbnails, metadata, properties, Issues, RFIs, Sheets, model sets, clash tests, expiring clash resources, webhook subscriptions, signed callback delivery, retry lifecycle testing, or Autodesk userinfo without hitting real Autodesk APIs. Triggers include "APS OAuth", "Autodesk Platform Services", "Autodesk Forge", "APS hubs", "APS projects", "Data Management folders", "Data Management search", "Data Management uploads", "Data Management versions", "Model Derivative job", "Model Derivative manifest", "model metadata", "ACC Issues", "ACC RFIs", "ACC Sheets", "Model Coordination", "clash test", "APS webhooks", "dm.version.added", "extraction.finished", "APS 3-legged flow", "APS 2-legged token", "APS refresh token", or "Autodesk userinfo".
 allowed-tools: Bash(npx emulate:*), Bash(emulate:*), Bash(curl:*)
 ---
 
 # Autodesk Platform Services (APS) Emulator
 
-APS authentication v2 emulation plus Data Management reads and uploads, simulated Model Derivative translation, ACC Issues, RFIs, Sheets, and Model Coordination reads, with active Webhooks delivery and local event simulators. Protected routes validate the emulator's own RS256 token signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by these routes.
+APS authentication v2 emulation plus Data Management reads, recursive search and signed transfers, simulated Model Derivative translation and inspection, ACC Issues, RFIs, Sheets, and Model Coordination reads, with active Webhooks delivery and local event simulators. Protected routes validate the emulator's own RS256 token signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted by these routes.
 
 ## Start
 
@@ -287,7 +287,13 @@ MANIFEST_URL=$(curl -s "$TIP_URL" -H "$AUTH" | jq -r '.data.relationships.deriva
 curl "$MANIFEST_URL" -H "$AUTH"
 ```
 
-The tree adds top-folder, folder detail and contents, item detail and versions, tip, and version detail reads. Folder contents returns mixed folder and item resources plus each page item's tip in `included`. It accepts `filter[type]`, `filter[extension.type]`, and zero-based `page[number]` with `page[limit]` up to 200. Responses use JSON:API envelopes with resolving `links` and `relationships`.
+The tree adds top-folder, folder detail and contents, recursive folder search, item detail and versions, tip, and version detail reads. Folder contents returns mixed folder and item resources plus each page item's tip in `included`. Recursive search returns descendant items only, with each tip in `included`; it accepts case-insensitive `filter[attributes.displayName]` contains matching, comma-separated `filter[fileType]`, and zero-based pagination up to 200. Responses use JSON:API envelopes with resolving `links` and `relationships`.
+
+```bash
+ROOT_FOLDER_ID="urn:adsk.wipprod:fs.folder:co.emulate-documents"
+curl "$APS_URL/data/v1/projects/b.emulate-project/folders/$ROOT_FOLDER_ID/search?filter%5Battributes.displayName%5D=sample&filter%5BfileType%5D=rvt" \
+  -H "$AUTH"
+```
 
 ## Data Management Uploads and Translation
 
@@ -299,11 +305,11 @@ Use a 3-legged token carrying `data:create data:write` for project writes. Follo
 4. Create the first item with `POST /data/v1/projects/:projectId/items`, or add a version with `POST /data/v1/projects/:projectId/versions`.
 5. Poll the version's derivative relationship, or force it through `POST /_aps/simulate/translation-complete`.
 
-The signed URL carries its own nonce, signature, and expiry. Uploaded bytes remain in memory with a configurable 25 MB default cap. New versions auto-enqueue a translation by default and emit `dm.version.added`. Manifest reads advance the job lazily from `pending` through `inprogress` to `success`, or `failed` for configured extensions, and emit `extraction.finished` once at the terminal transition.
+The signed URL carries its own nonce, signature, and expiry. Uploaded bytes remain in memory with a configurable 25 MB default cap. Finalized objects support `POST signeds3download`; the returned signed GET URL serves the stored bytes without bearer auth. New versions auto-enqueue a translation by default and emit `dm.version.added`. Manifest reads advance the job lazily from `pending` through `inprogress` to `success`, or `failed` for configured extensions, and emit `extraction.finished` once at the terminal transition.
 
 ## Model Derivative Reads and Jobs
 
-Formats and manifests accept either a 2-legged or 3-legged token carrying `data:read`. After obtaining the 2-legged token above:
+Formats, manifests, thumbnails, and metadata accept either a 2-legged or 3-legged token carrying `data:read`. After obtaining the 2-legged token above:
 
 ```bash
 SAMPLE_URN="dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA"
@@ -313,9 +319,15 @@ curl "$APS_URL/modelderivative/v2/designdata/formats" \
 
 curl "$APS_URL/modelderivative/v2/designdata/$SAMPLE_URN/manifest" \
   -H "Authorization: Bearer <2-legged-access-token>"
+
+METADATA=$(curl -s "$APS_URL/modelderivative/v2/designdata/$SAMPLE_URN/metadata" \
+  -H "Authorization: Bearer <2-legged-access-token>")
+VIEW_GUID=$(printf '%s' "$METADATA" | jq -r '.data.metadata[0].guid')
+curl "$APS_URL/modelderivative/v2/designdata/$SAMPLE_URN/metadata/$VIEW_GUID/properties" \
+  -H "Authorization: Bearer <2-legged-access-token>"
 ```
 
-Create jobs with `POST /modelderivative/v2/designdata/job`, an encoded uploaded object ID, and `svf2`, `svf`, or `thumbnail` output. The route requires `data:create data:write`; `x-ads-force: true` resets an existing job. Unknown source or output formats return `400`. Unknown manifest URNs return `404`, matching the real empty-body response. Successful manifests contain a plausible derivative tree for state-driven tests, but the emulator does not serve geometry, metadata, properties, thumbnails, or downloads.
+Create jobs with `POST /modelderivative/v2/designdata/job`, an encoded uploaded object ID, and `svf2`, `svf`, or `thumbnail` output. The route requires `data:create data:write`; `x-ads-force: true` resets an existing job. Unknown source or output formats return `400`. Unknown manifest URNs return `404`, matching the real empty-body response. Thumbnail and metadata reads return `202` while translating. Successful reads expose a deterministic placeholder PNG plus stable synthetic view GUIDs, object trees, and small property bags. `DELETE /manifest` requires `data:write` and removes the job and derivatives until a new job is posted. The emulator does not serve geometry or a full property database.
 
 ## ACC Workflow Reads
 
@@ -497,4 +509,4 @@ const { payload } = await jwtVerify(accessToken, jwks, {
 
 ## Current Limits
 
-Data Management writes, storage and OSS routes, Commands, search, and refs; translation jobs; other Model Derivative resources; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; webhook callback verification; rate limits; and the real token propagation delay are not included yet.
+General Data Management mutations beyond the supported upload/version workflow, Commands, refs, batch downloads, and app-owned bucket management; Model Derivative geometry, derivative files, specific-property query POSTs, and uncommon output formats; ACC Forms, Submittals, Assets, Relationships, and Model Properties; Model Coordination writes, index-service routes, sqlite clash resources, screenshots, and exports; ACC write endpoints; webhook callback verification; rate limits; and the real token propagation delay are not included yet.

@@ -1,6 +1,6 @@
 import type { AppEnv, Context, RouteContext } from "@emulators/core";
 import { apsAuth } from "../auth.js";
-import { itemTip, rootFolderForProject } from "../dm-tree.js";
+import { folderSubtree, itemTip, rootFolderForProject } from "../dm-tree.js";
 import type { ApsDocumentFolder, ApsDocumentItem, ApsDocumentVersion, ApsHub, ApsProject } from "../entities.js";
 import { jsonApiDocument, jsonApiError, jsonApiNotFound, routeId } from "../jsonapi.js";
 import type { ApsStore } from "../store.js";
@@ -290,6 +290,13 @@ function pageLinks(c: Context<AppEnv>, baseUrl: string, number: number, limit: n
   };
 }
 
+function includedTipVersions(baseUrl: string, aps: ApsStore, items: ApsDocumentItem[]) {
+  return items
+    .map((item) => itemTip(aps, item.item_id))
+    .filter((version): version is ApsDocumentVersion => Boolean(version))
+    .map((version) => documentVersionData(baseUrl, version));
+}
+
 export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): void {
   const aps = getApsStore(store);
   const auth = apsAuth(store, { scopes: ["data:read"], requireUser: true });
@@ -390,11 +397,13 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
     const resources = [...children, ...items];
     const start = parsedPage.number * parsedPage.limit;
     const page = resources.slice(start, start + parsedPage.limit);
-    const included = page
-      .filter((entry) => entry.kind === "item")
-      .map((entry) => itemTip(aps, entry.value.item_id))
-      .filter((version): version is ApsDocumentVersion => Boolean(version))
-      .map((version) => documentVersionData(baseUrl, version));
+    const included = includedTipVersions(
+      baseUrl,
+      aps,
+      page
+        .filter((entry): entry is { kind: "item"; value: ApsDocumentItem } => entry.kind === "item")
+        .map((entry) => entry.value),
+    );
     return jsonApiDocument(
       c,
       requestHref(c, baseUrl),
@@ -402,6 +411,42 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
         entry.kind === "folder" ? folderData(baseUrl, aps, entry.value) : documentItemData(baseUrl, aps, entry.value),
       ),
       { included, links: pageLinks(c, baseUrl, parsedPage.number, parsedPage.limit, resources.length) },
+    );
+  });
+
+  app.get("/data/v1/projects/:projectId/folders/:folderId/search", auth, (c) => {
+    const project = projectForDataRoute(aps, c.req.param("projectId"));
+    const folderId = routeId(c.req.param("folderId"));
+    const folder = aps.documentFolders.findOneBy("folder_id", folderId);
+    if (!project || !folder || folder.project_id !== project.project_id) {
+      return jsonApiNotFound(c, `The folder ${folderId} was not found in project ${c.req.param("projectId")}.`);
+    }
+    const parsedPage = pagination(c);
+    if (typeof parsedPage === "string") return jsonApiError(c, 400, "BAD_INPUT", parsedPage);
+    const name = c.req.query("filter[attributes.displayName]")?.toLocaleLowerCase() ?? "";
+    const fileTypes = queryValues(c, "filter[fileType]")
+      .map((value) => value.trim().toLocaleLowerCase().replace(/^\./, ""))
+      .filter(Boolean);
+    const folderIds = new Set(folderSubtree(aps, project.project_id, folder.folder_id).map((entry) => entry.folder_id));
+    const items = aps.documentItems
+      .findBy("project_id", project.project_id)
+      .filter((item) => folderIds.has(item.folder_id) && !item.hidden)
+      .filter((item) => !name || item.display_name.toLocaleLowerCase().includes(name))
+      .filter((item) => {
+        if (fileTypes.length === 0) return true;
+        const tip = itemTip(aps, item.item_id);
+        return Boolean(tip && fileTypes.includes(tip.file_type.toLocaleLowerCase()));
+      });
+    const start = parsedPage.number * parsedPage.limit;
+    const page = items.slice(start, start + parsedPage.limit);
+    return jsonApiDocument(
+      c,
+      requestHref(c, baseUrl),
+      page.map((item) => documentItemData(baseUrl, aps, item)),
+      {
+        included: includedTipVersions(baseUrl, aps, page),
+        links: pageLinks(c, baseUrl, parsedPage.number, parsedPage.limit, items.length),
+      },
     );
   });
 

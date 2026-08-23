@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AppEnv, Context, RouteContext } from "@emulators/core";
 import { accessTokenForRequest, apsAuth } from "../auth.js";
+import { stableDerivativeGuid } from "../derivative-resources.js";
 import { createDocumentItem, createDocumentVersion, documentFileType, documentMimeType, itemTip } from "../dm-tree.js";
 import { emitDocumentVersionAdded } from "../dm-events.js";
 import type { ApsDocumentItem, ApsDocumentVersion, ApsStorageObject } from "../entities.js";
@@ -67,7 +68,7 @@ function versionValues(
     region: "US",
     bubble_urn: Buffer.from(storage.object_id).toString("base64url"),
     viewable_id: "emulate-3d-view",
-    viewable_guid: "d8e734a8-6e9e-4f4d-9a4f-000000000001",
+    viewable_guid: stableDerivativeGuid(`${Buffer.from(storage.object_id).toString("base64url")}:3d`),
     created_by: actor.id,
     created_by_name: actor.name,
     create_time: now,
@@ -94,10 +95,13 @@ async function finishVersionWrite(
 
 export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
   const aps = getApsStore(store);
+  const readAuth = apsAuth(store, { scopes: ["data:read"] });
   const writeAuth = apsAuth(store, { scopes: ["data:create", "data:write"] });
   const userWriteAuth = apsAuth(store, { scopes: ["data:create", "data:write"], requireUser: true });
 
-  app.use("/oss/v2/buckets/*", writeAuth);
+  app.use("/oss/v2/buckets/*", (c, next) =>
+    c.req.path.endsWith("/signeds3download") ? readAuth(c, next) : writeAuth(c, next),
+  );
 
   app.post("/data/v1/projects/:projectId/storage", userWriteAuth, async (c) => {
     const projectId = routeId(c.req.param("projectId"));
@@ -256,6 +260,66 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
       size: bytes.length,
       sha1,
       location,
+    });
+  });
+
+  app.post("/oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3download", (c) => {
+    const bucketKey = routeId(c.req.param("bucketKey"));
+    const objectKey = routeId(c.req.param("objectKey"));
+    const storage = aps.storageObjects
+      .findBy("bucket_key", bucketKey)
+      .find(
+        (candidate) => candidate.object_key === objectKey && candidate.uploaded_at && candidate.content_base64 !== null,
+      );
+    if (!storage) return notFound(c, "The requested storage object");
+    const minutesValue = c.req.query("minutesExpiration") ?? String(DEFAULT_SIGNED_URL_TTL_MINUTES);
+    if (!/^\d+$/.test(minutesValue) || Number(minutesValue) < 1 || Number(minutesValue) > 60) {
+      return badInput(c, "minutesExpiration", "minutesExpiration must be an integer from 1 through 60.");
+    }
+    const token = Buffer.from(storage.object_id).toString("base64url");
+    const issued = issueSignedResourceUrl(
+      store,
+      baseUrl,
+      `/oss/v2/signed-download/${token}`,
+      `aps-download:${storage.object_id}`,
+      Number(minutesValue) * 60_000,
+    );
+    return c.json({
+      url: issued.url,
+      expiration: issued.validUntil,
+      size: storage.size,
+      sha1: storage.sha1,
+    });
+  });
+
+  app.get("/oss/v2/signed-download/:token", (c) => {
+    let objectId: string;
+    try {
+      objectId = Buffer.from(c.req.param("token"), "base64url").toString("utf8");
+    } catch {
+      return forbidden(c, "The signed download URL is invalid or has expired.");
+    }
+    if (
+      !validateSignedResource(store, `aps-download:${objectId}`, {
+        expires: c.req.query("expires"),
+        nonce: c.req.query("nonce"),
+        signature: c.req.query("signature"),
+      })
+    ) {
+      return forbidden(c, "The signed download URL is invalid or has expired.");
+    }
+    const storage = aps.storageObjects.findOneBy("object_id", objectId);
+    if (!storage || !storage.uploaded_at || storage.content_base64 === null) {
+      return notFound(c, "The requested storage object");
+    }
+    const bytes = Buffer.from(storage.content_base64, "base64");
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "Content-Type": documentMimeType(documentFileType(storage.name)),
+        "Content-Length": String(bytes.length),
+        "Content-Disposition": `attachment; filename="${storage.name.replace(/["\r\n]/g, "")}"`,
+      },
     });
   });
 

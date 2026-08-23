@@ -1,6 +1,6 @@
 # @emulators/aps
 
-Autodesk Platform Services (APS) emulation with authentication v2, Data Management reads and uploads, simulated Model Derivative translation, Autodesk Construction Cloud Issues, RFIs, Sheets, and Model Coordination reads, plus active Webhooks delivery and local event simulation.
+Autodesk Platform Services (APS) emulation with authentication v2, Data Management reads, recursive search, uploads and downloads, simulated Model Derivative translation and inspection, Autodesk Construction Cloud Issues, RFIs, Sheets, and Model Coordination reads, plus active Webhooks delivery and local event simulation.
 
 Part of [emulate](https://github.com/vercel-labs/emulate) — local drop-in replacement services for CI and no-network sandboxes.
 
@@ -27,6 +27,7 @@ npm install @emulators/aps
 - `GET /project/v1/hubs/:hubId/projects/:projectId/topFolders` — list a project's top folders
 - `GET /data/v1/projects/:projectId/folders/:folderId` — get a folder
 - `GET /data/v1/projects/:projectId/folders/:folderId/contents` — list mixed child folders and items with included tips
+- `GET /data/v1/projects/:projectId/folders/:folderId/search` — recursively search descendant items with included tips
 - `GET /data/v1/projects/:projectId/items/:itemId` — get an item with its included tip
 - `GET /data/v1/projects/:projectId/items/:itemId/versions` — list an item's versions
 - `GET /data/v1/projects/:projectId/items/:itemId/tip` — get an item's tip version
@@ -34,11 +35,18 @@ npm install @emulators/aps
 - `POST /data/v1/projects/:projectId/storage` — allocate project storage for an upload
 - `GET/POST /oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload` — issue and complete signed upload URLs
 - `PUT /oss/v2/signed-upload/:uploadKey/:part` — upload raw bytes using only the signed URL
+- `POST /oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3download` — issue a signed download URL
+- `GET /oss/v2/signed-download/:token` — download stored bytes using only the signed URL
 - `POST /data/v1/projects/:projectId/items` — create an item and its first version
 - `POST /data/v1/projects/:projectId/versions` — add the next version to an item
 - `GET /modelderivative/v2/designdata/formats` — list translation formats
 - `POST /modelderivative/v2/designdata/job` — start or force a simulated translation job
 - `GET /modelderivative/v2/designdata/:urn/manifest` — get a seeded or live translation manifest
+- `DELETE /modelderivative/v2/designdata/:urn/manifest` — remove a manifest and its simulated derivatives
+- `GET /modelderivative/v2/designdata/:urn/thumbnail` — get a deterministic PNG placeholder
+- `GET /modelderivative/v2/designdata/:urn/metadata` — list deterministic model views
+- `GET /modelderivative/v2/designdata/:urn/metadata/:guid` — get a deterministic object tree
+- `GET /modelderivative/v2/designdata/:urn/metadata/:guid/properties` — get deterministic bulk properties
 - `GET /construction/issues/v1/projects/:projectId/users/me` — get current-user Issues permissions
 - `GET /construction/issues/v1/projects/:projectId/issue-types` — list issue types
 - `GET /construction/issues/v1/projects/:projectId/issues` — list and filter issues
@@ -94,9 +102,9 @@ Real APS paths map 1:1 onto the emulator:
 
 ## Behavior
 
-Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Protected routes validate the signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted. Data Management reads require a 3-legged `data:read` token. Storage, item, and version writes require a 3-legged token with `data:create data:write`. Signed upload targets use only their expiring URL signature. Model Derivative jobs require `data:create data:write`, while format and manifest reads require `data:read` and accept either token type.
+Access tokens are RS256 JWTs verifiable against the JWKS endpoint and expire after one hour (`expires_in` 3599). Protected routes validate the signature, expiry, revocation state, and required scopes. Generic static emulator tokens are not accepted. Data Management reads and recursive search require a 3-legged `data:read` token. Storage, item, and version writes require a 3-legged token with `data:create data:write`. Signed upload and download targets use only their expiring URL signature. Model Derivative jobs require `data:create data:write`; format, manifest, thumbnail, and metadata reads require `data:read` and accept either token type. Manifest deletion requires `data:write`.
 
-Uploaded bytes stay in memory and reset with the emulator. The default object cap is 25 MB. Creating a version automatically enqueues a timer-free translation job whose manifest advances lazily from `pending` through `inprogress` to a terminal state. Version creation emits `dm.version.added`; the first observation of a terminal translation emits `extraction.finished`. Successful manifests contain a plausible derivatives tree, but the emulator never serves viewable geometry.
+Uploaded bytes stay in memory and reset with the emulator. The default object cap is 25 MB. Creating a version automatically enqueues a timer-free translation job whose manifest advances lazily from `pending` through `inprogress` to a terminal state. Version creation emits `dm.version.added`; the first observation of a terminal translation emits `extraction.finished`. Successful translations expose a plausible manifest, deterministic placeholder thumbnail, stable view GUIDs, object trees, and small property bags. The emulator never serves viewable geometry.
 
 With no config, the emulator also seeds one hub, two projects, realistic folder trees with item histories, one ACC project membership, sample Issues, RFIs, Sheets, two coordinated Docs models with manifests, and one successful clash test.
 
@@ -259,9 +267,31 @@ MANIFEST_URL=$(curl -s "$TIP_URL" -H "$AUTH" | jq -r '.data.relationships.deriva
 curl "$MANIFEST_URL" -H "$AUTH"
 ```
 
-Folder contents returns mixed folders and items with tip versions in `included`. It supports type and extension filters plus zero-based pagination up to 200 resources per page. Version histories are newest first.
+Folder contents returns mixed folders and items with tip versions in `included`. It supports type and extension filters plus zero-based pagination up to 200 resources per page. Recursive search starts at one project folder, returns items only, and puts every result's tip version in `included`. It accepts case-insensitive `filter[attributes.displayName]` contains matching, comma-separated `filter[fileType]`, and the same pagination controls. Version histories are newest first.
 
-The supported upload path is project storage followed by `signeds3upload`, signed part PUTs, upload completion, and then item or version creation. Direct deprecated OSS object PUTs, multipart resume and abort, downloads, metadata, properties, and geometry are intentionally outside this emulator surface.
+```bash
+ROOT_FOLDER_ID="urn:adsk.wipprod:fs.folder:co.emulate-documents"
+curl "$APS_EMULATOR_URL/data/v1/projects/b.emulate-project/folders/$ROOT_FOLDER_ID/search?filter%5Battributes.displayName%5D=sample&filter%5BfileType%5D=rvt" \
+  -H "$AUTH"
+```
+
+The supported upload path is project storage followed by `signeds3upload`, signed part PUTs, upload completion, and then item or version creation. Finalized objects support `signeds3download`; the issued GET URL returns the exact stored bytes and recorded content length without bearer auth. Direct deprecated OSS object PUTs, multipart resume and abort, batch downloads, and geometry are intentionally outside this emulator surface.
+
+## Model Derivative Inspection
+
+Use a 2-legged or 3-legged `data:read` token after translation succeeds:
+
+```bash
+SAMPLE_URN="dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6ZW11bGF0ZS1idWNrZXQvc2FtcGxlLnJ2dA"
+METADATA=$(curl -s "$APS_EMULATOR_URL/modelderivative/v2/designdata/$SAMPLE_URN/metadata" -H "$AUTH")
+VIEW_GUID=$(printf '%s' "$METADATA" | jq -r '.data.metadata[0].guid')
+
+curl "$APS_EMULATOR_URL/modelderivative/v2/designdata/$SAMPLE_URN/thumbnail?width=400&height=400" -H "$AUTH"
+curl "$APS_EMULATOR_URL/modelderivative/v2/designdata/$SAMPLE_URN/metadata/$VIEW_GUID" -H "$AUTH"
+curl "$APS_EMULATOR_URL/modelderivative/v2/designdata/$SAMPLE_URN/metadata/$VIEW_GUID/properties" -H "$AUTH"
+```
+
+Thumbnail and metadata reads return `202` while a live job is pending or in progress. Successful thumbnails are one deterministic placeholder PNG. Metadata contains one stable 3D view per translated version and one 2D view when a matching sheet seed exists. Object trees and properties are deterministic inspection fixtures, not extracted source geometry or a full property database. Deleting a manifest removes the live job or seeded manifest; posting a new job for an uploaded source restores it.
 
 ## Model Coordination
 
