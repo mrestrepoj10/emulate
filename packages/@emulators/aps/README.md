@@ -27,7 +27,7 @@ npm install @emulators/aps
 - `GET /project/v1/hubs/:hubId/projects/:projectId/topFolders` — list a project's top folders
 - `GET /data/v1/projects/:projectId/folders/:folderId` — get a folder
 - `GET /data/v1/projects/:projectId/folders/:folderId/contents` — list mixed child folders and items with included tips
-- `GET /data/v1/projects/:projectId/folders/:folderId/search` — recursively search descendant items with included tips
+- `GET /data/v1/projects/:projectId/folders/:folderId/search` — recursively search descendant items, returning tip versions with included items
 - `GET /data/v1/projects/:projectId/items/:itemId` — get an item with its included tip
 - `GET /data/v1/projects/:projectId/items/:itemId/versions` — list an item's versions
 - `GET /data/v1/projects/:projectId/items/:itemId/tip` — get an item's tip version
@@ -267,7 +267,7 @@ MANIFEST_URL=$(curl -s "$TIP_URL" -H "$AUTH" | jq -r '.data.relationships.deriva
 curl "$MANIFEST_URL" -H "$AUTH"
 ```
 
-Folder contents returns mixed folders and items with tip versions in `included`. It supports type and extension filters plus zero-based pagination up to 200 resources per page. Recursive search starts at one project folder, returns items only, and puts every result's tip version in `included`. It accepts case-insensitive `filter[attributes.displayName]` contains matching, comma-separated `filter[fileType]`, and the same pagination controls. Version histories are newest first.
+Folder contents returns mixed folders and items with tip versions in `included`. It supports type and extension filters plus zero-based pagination up to 200 resources per page. Recursive search starts at one project folder and returns each matching item's tip version in `data` (with an `item` relationship) and the item itself in `included`, matching the live endpoint's version-shaped response. It accepts case-insensitive `filter[attributes.displayName]` exact matching, `filter[attributes.displayName]-contains` substring matching, comma-separated `filter[fileType]`, and the same pagination controls. Version histories are newest first.
 
 ```bash
 ROOT_FOLDER_ID="urn:adsk.wipprod:fs.folder:co.emulate-documents"

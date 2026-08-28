@@ -421,29 +421,35 @@ export function dataManagementRoutes({ app, store, baseUrl }: RouteContext): voi
     if (folder instanceof Response) return folder;
     const parsedPage = pagination(c);
     if (typeof parsedPage === "string") return jsonApiError(c, 400, "BAD_INPUT", parsedPage);
-    const name = c.req.query("filter[attributes.displayName]")?.toLocaleLowerCase() ?? "";
+    const exactName = c.req.query("filter[attributes.displayName]")?.toLocaleLowerCase();
+    const nameContains = c.req.query("filter[attributes.displayName]-contains")?.toLocaleLowerCase();
     const fileTypes = queryValues(c, "filter[fileType]")
       .map((value) => value.trim().toLocaleLowerCase().replace(/^\./, ""))
       .filter(Boolean);
     const folderIds = new Set(folderSubtree(aps, folder.project_id, folder.folder_id).map((entry) => entry.folder_id));
-    const items = aps.documentItems
+    const matches = aps.documentItems
       .findBy("project_id", folder.project_id)
       .filter((item) => folderIds.has(item.folder_id) && !item.hidden)
-      .filter((item) => !name || item.display_name.toLocaleLowerCase().includes(name))
       .filter((item) => {
-        if (fileTypes.length === 0) return true;
+        const displayName = item.display_name.toLocaleLowerCase();
+        if (exactName !== undefined && displayName !== exactName) return false;
+        return nameContains === undefined || displayName.includes(nameContains);
+      })
+      .flatMap((item) => {
         const tip = itemTip(aps, item.item_id);
-        return Boolean(tip && fileTypes.includes(tip.file_type.toLocaleLowerCase()));
+        if (!tip) return [];
+        if (fileTypes.length > 0 && !fileTypes.includes(tip.file_type.toLocaleLowerCase())) return [];
+        return [{ item, tip }];
       });
     const start = parsedPage.number * parsedPage.limit;
-    const page = items.slice(start, start + parsedPage.limit);
+    const page = matches.slice(start, start + parsedPage.limit);
     return jsonApiDocument(
       c,
       requestHref(c, baseUrl),
-      page.map((item) => documentItemData(baseUrl, aps, item)),
+      page.map((match) => documentVersionData(baseUrl, match.tip)),
       {
-        included: includedTipVersions(baseUrl, aps, page),
-        links: pageLinks(c, baseUrl, parsedPage.number, parsedPage.limit, items.length),
+        included: page.map((match) => documentItemData(baseUrl, aps, match.item)),
+        links: pageLinks(c, baseUrl, parsedPage.number, parsedPage.limit, matches.length),
       },
     );
   });
