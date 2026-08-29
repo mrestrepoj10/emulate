@@ -246,6 +246,12 @@ export interface ApsStorageObject extends Entity {
   uploaded_at: string | null;
 }
 
+export interface ApsBucket extends Entity {
+  bucket_key: string;
+  policy_key: string;
+  created_at: string;
+}
+
 export interface ApsUploadSession extends Entity {
   upload_key: string;
   object_key: string;

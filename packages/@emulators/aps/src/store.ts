@@ -1,5 +1,6 @@
 import { Store, type Collection } from "@emulators/core";
 import type {
+  ApsBucket,
   ApsAccProjectUser,
   ApsClashGroup,
   ApsClashTest,
@@ -52,6 +53,7 @@ export interface ApsStore {
   documentFolders: Collection<ApsDocumentFolder>;
   documentItems: Collection<ApsDocumentItem>;
   documentVersions: Collection<ApsDocumentVersion>;
+  buckets: Collection<ApsBucket>;
   storageObjects: Collection<ApsStorageObject>;
   uploadSessions: Collection<ApsUploadSession>;
   translationJobs: Collection<ApsTranslationJob>;
@@ -89,6 +91,7 @@ export function getApsStore(store: Store): ApsStore {
     ]),
     documentItems: store.collection<ApsDocumentItem>("aps.documentItems", ["item_id", "project_id", "folder_id"]),
     documentVersions: store.collection<ApsDocumentVersion>("aps.documentVersions", ["version_id", "item_id"]),
+    buckets: store.collection<ApsBucket>("aps.buckets", ["bucket_key"]),
     storageObjects: store.collection<ApsStorageObject>("aps.storageObjects", [
       "object_id",
       "bucket_key",

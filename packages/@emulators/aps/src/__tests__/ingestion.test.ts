@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_WEBHOOK_CHILD_FOLDER_ID } from "../helpers.js";
 import { getApsStore } from "../store.js";
 import { createItem, createStorage, uploadObject } from "./ingestion-helpers.js";
-import { bearer, base, createTestApp, issueThreeLeggedToken } from "./test-helpers.js";
+import { bearer, base, createTestApp, issueThreeLeggedToken, issueTwoLeggedToken } from "./test-helpers.js";
 
 const openServers: Server[] = [];
 
@@ -320,3 +320,96 @@ describe("APS ingestion routes", () => {
 function randomKey(): string {
   return "00000000-0000-4000-8000-000000000000";
 }
+
+describe("app-owned OSS buckets", () => {
+  it("creates, describes, and lists a bucket with implicit signed uploads", async () => {
+    const { app } = createTestApp();
+    const bucketToken = await issueTwoLeggedToken(app, "bucket:create bucket:read data:read data:create data:write");
+
+    const missing = await app.request(`${base}/oss/v2/buckets/demo-app-bucket/details`, {
+      headers: bearer(bucketToken),
+    });
+    expect(missing.status).toBe(404);
+
+    const created = await app.request(`${base}/oss/v2/buckets`, {
+      method: "POST",
+      headers: { ...bearer(bucketToken), "Content-Type": "application/json" },
+      body: JSON.stringify({ bucketKey: "demo-app-bucket", policyKey: "persistent" }),
+    });
+    expect(created.status).toBe(200);
+    expect(((await created.json()) as Record<string, any>).bucketKey).toBe("demo-app-bucket");
+
+    const duplicate = await app.request(`${base}/oss/v2/buckets`, {
+      method: "POST",
+      headers: { ...bearer(bucketToken), "Content-Type": "application/json" },
+      body: JSON.stringify({ bucketKey: "demo-app-bucket", policyKey: "persistent" }),
+    });
+    expect(duplicate.status).toBe(409);
+
+    const details = await app.request(`${base}/oss/v2/buckets/demo-app-bucket/details`, {
+      headers: bearer(bucketToken),
+    });
+    expect(details.status).toBe(200);
+
+    // No pre-created storage object: the signed upload creates it in the bucket.
+    const upload = await uploadObject(
+      app,
+      bucketToken,
+      { objectId: "urn:adsk.objects:os.object:demo-app-bucket/tower.rvt", bucketKey: "demo-app-bucket", objectKey: "tower.rvt" },
+      [new TextEncoder().encode("model-bytes")],
+    );
+    expect(upload.objectId).toBe("urn:adsk.objects:os.object:demo-app-bucket/tower.rvt");
+
+    const listed = await app.request(`${base}/oss/v2/buckets/demo-app-bucket/objects`, {
+      headers: bearer(bucketToken),
+    });
+    expect(listed.status).toBe(200);
+    const listedBody = (await listed.json()) as Record<string, any>;
+    expect(listedBody.items).toHaveLength(1);
+    expect(listedBody.items[0].objectKey).toBe("tower.rvt");
+    expect(listedBody.items[0].size).toBeGreaterThan(0);
+
+    const unknownBucketUpload = await app.request(
+      `${base}/oss/v2/buckets/never-created/objects/x.rvt/signeds3upload?parts=1`,
+      { headers: bearer(bucketToken) },
+    );
+    expect(unknownBucketUpload.status).toBe(404);
+  });
+
+  it("translates a zip through compressedUrn and rootFilename", async () => {
+    const { app } = createTestApp();
+    const token = await issueTwoLeggedToken(app, "bucket:create bucket:read data:read data:create data:write");
+    await app.request(`${base}/oss/v2/buckets`, {
+      method: "POST",
+      headers: { ...bearer(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ bucketKey: "zip-bucket", policyKey: "transient" }),
+    });
+    await uploadObject(
+      app,
+      token,
+      { objectId: "urn:adsk.objects:os.object:zip-bucket/pack.zip", bucketKey: "zip-bucket", objectKey: "pack.zip" },
+      [new TextEncoder().encode("zip-bytes")],
+    );
+    const urn = Buffer.from("urn:adsk.objects:os.object:zip-bucket/pack.zip").toString("base64url");
+
+    const missingRoot = await app.request(`${base}/modelderivative/v2/designdata/job`, {
+      method: "POST",
+      headers: { ...bearer(token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: { urn, compressedUrn: true },
+        output: { formats: [{ type: "svf2", views: ["2d", "3d"] }] },
+      }),
+    });
+    expect(missingRoot.status).toBe(400);
+
+    const job = await app.request(`${base}/modelderivative/v2/designdata/job`, {
+      method: "POST",
+      headers: { ...bearer(token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: { urn, compressedUrn: true, rootFilename: "model.rvt" },
+        output: { formats: [{ type: "svf2", views: ["2d", "3d"] }] },
+      }),
+    });
+    expect(job.status).toBe(201);
+  });
+});

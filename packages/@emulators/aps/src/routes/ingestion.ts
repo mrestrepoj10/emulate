@@ -139,12 +139,76 @@ export function ingestionRoutes({ app, store, baseUrl }: RouteContext): void {
     });
   });
 
+  const bucketCreateAuth = apsAuth(store, { scopes: ["bucket:create"] });
+  const bucketReadAuth = apsAuth(store, { scopes: ["bucket:read"] });
+
+  app.post("/oss/v2/buckets", bucketCreateAuth, async (c) => {
+    const body = await jsonObjectBody(c);
+    const bucketKey = body ? optionalString(body.bucketKey) : undefined;
+    const policyKey = body ? optionalString(body.policyKey) : undefined;
+    if (!bucketKey || !/^[-_.a-z0-9]{3,128}$/.test(bucketKey)) {
+      return badInput(c, "bucketKey", "bucketKey must be 3-128 lowercase characters.");
+    }
+    if (!policyKey || !["transient", "temporary", "persistent"].includes(policyKey)) {
+      return badInput(c, "policyKey", "policyKey must be transient, temporary, or persistent.");
+    }
+    if (aps.buckets.findOneBy("bucket_key", bucketKey)) {
+      return c.json({ reason: "Bucket already exists" }, 409);
+    }
+    const createdDate = Date.now();
+    aps.buckets.insert({ bucket_key: bucketKey, policy_key: policyKey, created_at: new Date(createdDate).toISOString() });
+    return c.json({ bucketKey, policyKey, createdDate }, 200);
+  });
+
+  app.get("/oss/v2/buckets/:bucketKey/details", bucketReadAuth, (c) => {
+    const bucketKey = routeId(c.req.param("bucketKey"));
+    const bucket = aps.buckets.findOneBy("bucket_key", bucketKey);
+    if (!bucket) return notFound(c, "The requested bucket");
+    return c.json({
+      bucketKey: bucket.bucket_key,
+      policyKey: bucket.policy_key,
+      createdDate: Date.parse(bucket.created_at),
+    });
+  });
+
+  app.get("/oss/v2/buckets/:bucketKey/objects", readAuth, (c) => {
+    const bucketKey = routeId(c.req.param("bucketKey"));
+    if (!aps.buckets.findOneBy("bucket_key", bucketKey)) return notFound(c, "The requested bucket");
+    const items = aps.storageObjects
+      .findBy("bucket_key", bucketKey)
+      .filter((candidate) => candidate.uploaded_at !== null)
+      .map((candidate) => ({
+        bucketKey,
+        objectKey: candidate.object_key,
+        objectId: candidate.object_id,
+        sha1: candidate.sha1,
+        size: candidate.size,
+      }));
+    return c.json({ items });
+  });
+
   app.get("/oss/v2/buckets/:bucketKey/objects/:objectKey/signeds3upload", writeAuth, (c) => {
     const bucketKey = routeId(c.req.param("bucketKey"));
     const objectKey = routeId(c.req.param("objectKey"));
-    const storage = aps.storageObjects
+    let storage = aps.storageObjects
       .findBy("bucket_key", bucketKey)
       .find((candidate) => candidate.object_key === objectKey);
+    if (!storage && aps.buckets.findOneBy("bucket_key", bucketKey)) {
+      // Real OSS creates app-bucket objects on first signed upload; only
+      // Data Management storage requires the pre-created object.
+      storage = aps.storageObjects.insert({
+        object_id: `urn:adsk.objects:os.object:${bucketKey}/${objectKey}`,
+        bucket_key: bucketKey,
+        object_key: objectKey,
+        project_id: "",
+        folder_id: "",
+        name: objectKey,
+        size: 0,
+        sha1: "",
+        content_base64: null,
+        uploaded_at: null,
+      });
+    }
     if (!storage) return notFound(c, "The requested storage object");
     const partsValue = c.req.query("parts") ?? "1";
     const minutesValue = c.req.query("minutesExpiration") ?? String(DEFAULT_SIGNED_URL_TTL_MINUTES);

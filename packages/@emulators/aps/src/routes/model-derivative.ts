@@ -259,13 +259,21 @@ export function modelDerivativeRoutes({ app, store }: RouteContext): void {
     }
     const storage = aps.storageObjects.findOneBy("object_id", objectId);
     if (!storage || !storage.uploaded_at) return notFound(c, "The source storage object");
-    if (!isViewableInputFormat(storage.name)) {
-      return badInput(c, "input.urn", `The .${documentFileType(storage.name)} source format is not viewable.`);
+    // A compressed archive translates its root design file, matching real
+    // Model Derivative's compressedUrn + rootFilename contract.
+    const compressed = input.compressedUrn === true;
+    const rootFilename = optionalString(input.rootFilename);
+    if (compressed && !rootFilename) {
+      return badInput(c, "input.rootFilename", "rootFilename is required when compressedUrn is true.");
+    }
+    const sourceName = compressed && rootFilename ? rootFilename : storage.name;
+    if (!isViewableInputFormat(sourceName)) {
+      return badInput(c, "input.urn", `The .${documentFileType(sourceName)} source format is not viewable.`);
     }
     const force = c.req.header("x-ads-force")?.toLowerCase() === "true";
     const result = enqueueTranslation(aps, store, {
       urn,
-      sourceName: storage.name,
+      sourceName,
       outputFormats: formats,
       force,
     });
