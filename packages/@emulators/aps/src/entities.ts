@@ -367,3 +367,33 @@ export interface ApsSignedBlob extends Entity {
   content_type: string;
   content_base64: string;
 }
+
+export type ApsPropertyIndexType = "INDEX" | "DIFF";
+export type ApsPropertyIndexState = "PROCESSING" | "FINISHED" | "FAILED";
+
+export interface ApsPropertyIndex extends Entity {
+  project_id: string;
+  index_id: string;
+  type: ApsPropertyIndexType;
+  version_urns: string[];
+  prev_version_urns: string[];
+  cur_version_urns: string[];
+  state: ApsPropertyIndexState;
+  polls: number;
+  failure: string | null;
+  requested_at: string;
+  state_changed_at: string;
+}
+
+export interface ApsPropertyIndexQuery extends Entity {
+  project_id: string;
+  index_id: string;
+  query_id: string;
+  query: unknown;
+  columns: Record<string, unknown> | null;
+  state: ApsPropertyIndexState;
+  polls: number;
+  failure: string | null;
+  requested_at: string;
+  state_changed_at: string;
+}

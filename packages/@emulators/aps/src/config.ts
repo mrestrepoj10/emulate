@@ -254,6 +254,7 @@ export interface ApsSeedConfig {
   translation?: Partial<ApsTranslationConfig>;
   webhook_timing?: Partial<ApsWebhookTimingConfig>;
   model_coordination_timing?: Partial<ApsModelCoordinationTimingConfig>;
+  model_properties_index?: Partial<ApsModelPropertiesIndexConfig>;
   document_folders?: ApsDocumentFolderSeed[];
   document_items?: ApsDocumentItemSeed[];
   document_versions?: ApsDocumentVersionSeed[];
@@ -851,3 +852,15 @@ export const DEFAULT_DATA_SEED = {
     },
   ],
 } satisfies ApsSeedConfig;
+
+export interface ApsModelPropertiesIndexConfig {
+  /** Status observations that report PROCESSING before an index or query job finishes. */
+  processing_polls: number;
+  /** File version URNs whose indexes and diffs finish in the FAILED state. */
+  fail_version_urns: string[];
+}
+
+export const DEFAULT_MODEL_PROPERTIES_INDEX_CONFIG: ApsModelPropertiesIndexConfig = {
+  processing_polls: 1,
+  fail_version_urns: [],
+};
