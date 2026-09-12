@@ -64,11 +64,22 @@ npm install @emulators/aps
 - `GET /construction/sheets/v1/projects/:projectId/collections` — list Sheet collections
 - `GET /construction/sheets/v1/projects/:projectId/collections/:collectionId` — get a Sheet collection
 - `GET /bim360/modelset/v3/containers/:containerId/modelsets` — list Model Coordination model sets
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId` — get a model set
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/views` — list named model set views
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions` — list model set versions
 - `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/latest` — get the latest model set version
-- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/views` — list model set views
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version` — get a model set version with document statuses
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/views` — list view versions
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/views/:viewId` — get one view version
 - `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/tests` — list clash tests
+- `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/tests` — list clash tests of one version
+- `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/clashes/assigned` — search assigned clash groups
+- `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/clashes/closed` — search closed clash groups
+- `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/clashes/grouped` — list grouped clash IDs
+- `GET /bim360/clash/v3/containers/:containerId/tests/:testId` — get a clash test
 - `GET /bim360/clash/v3/containers/:containerId/tests/:testId/resources` — issue expiring gzip resource URLs
-- `GET /bim360/clash/v3/containers/:containerId/tests/:testId/clashes/:disposition` — list assigned or closed clash groups
+- `GET /bim360/clash/v3/containers/:containerId/tests/:testId/clashes/:disposition` — intersect assigned or closed groups with a test
+- `POST /bim360/clash/v3/containers/:containerId/tests/:testId/clashes/:disposition` — batch group clash data for a test
 - `POST/GET /webhooks/v1/systems/:system/events/:event/hooks` — create or list event hooks
 - `GET/PATCH/DELETE /webhooks/v1/systems/:system/events/:event/hooks/:hookId` — manage one hook
 - `POST/GET /webhooks/v1/systems/:system/hooks` — create or list hooks for a system
@@ -79,7 +90,8 @@ npm install @emulators/aps
 - `POST /_aps/simulate/extraction-finished` — emit from a seeded manifest
 - `POST /_aps/simulate/translation-complete` — finish a live translation job and emit its terminal webhook
 - `POST /_aps/simulate/issue-created` — emit from a seeded ACC issue
-- `POST /_aps/simulate/modelset-version-added` — add a model set version and run its clash test
+- `POST /_aps/simulate/modelset-version-added` — add a model set version (optionally a scenario step) and run its clash test
+- `POST /_aps/simulate/clash-group-assigned` and `/clash-group-closed` — create assigned or closed clash groups
 
 ## URL Mapping
 
@@ -305,14 +317,66 @@ ACCESS_TOKEN="<3-legged-access-token>"
 curl "$APS_EMULATOR_URL/bim360/modelset/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/versions/latest" \
   -H "Authorization: Bearer $ACCESS_TOKEN"
 
-TEST_ID=$(curl -s "$APS_EMULATOR_URL/bim360/clash/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/tests?status=Success" \
+TEST_ID=$(curl -s "$APS_EMULATOR_URL/bim360/clash/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/versions/3/tests?status=Success" \
   -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r '.tests[0].id')
 RESOURCE_URL=$(curl -s "$APS_EMULATOR_URL/bim360/clash/v3/containers/$PROJECT_ID/tests/$TEST_ID/resources" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r '.resources[2].url')
-curl -s "$RESOURCE_URL" | gunzip -c
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r '.resources[0].url')
+curl -s "$RESOURCE_URL" | gunzip -c | tail -c +4 | jq '.clashes | length'
 ```
 
-Resources are three deterministic JSON gzip artifacts with expiring signed URLs. Re-request resources for fresh URLs. `POST /_aps/simulate/modelset-version-added` adds a version and advances its one clash test from `Pending` through `Processing` to `Success`.
+The default seed carries one model set with three versions, one successful clash test per version, two named views (`All models` and `Architecture only`), one assigned clash group linked to the seeded issue `33333333-3333-4333-8333-333333333333`, and one closed group with reason `VALID_INTERFACE`. Version 1 reports 40 `New` clashes, version 2 adds 10 and resolves 15, version 3 adds 3 and resolves 5.
+
+### Result files
+
+Each successful test exposes three resources (`scope-version-clash.2.0.0`, `scope-version-clash-instance.2.0.0`, `scope-version-document.2.0.0`) with extension `json.gz`, an expiring signed URL, and `validUntil`. Like the real service, every file is gzip of a UTF-8 BOM followed by a wrapper object: `{"clashes":[…]}`, `{"instances":[…]}`, and `{"documents":[…]}`. Strip the first character before `JSON.parse`. Re-request resources for fresh URLs after they expire.
+
+- Clash `id` and the stable object ids `loid`/`roid` never change across versions. `status` is `New` when a clash first appears, `Existing` while it persists, and `Resolved` exactly once before it disappears.
+- Instance `ldid`/`rdid` index the documents file, whose `urn` equals the model set version's `versionUrn`. Instance `lvid`/`rvid` are LMV viewer ids: Model Derivative metadata `objectid` of that document version plus `LMV_ID_OFFSET` (1000), the same offset the Model Properties index emulation uses for `lmvId`.
+- Documents that are `Failed`, `Skipped`, or `Running` in a version are excluded from that version's files. Clashes between a document pair that is out of scope are not reported until both documents are clashed again. A `Failed` version has a `Failed` test, returns `409` from `resources`, and does not advance the clash pool.
+
+### Scenario seeds
+
+Each `model_sets` entry accepts a `clash_scenario` that drives every version deterministically, `views` for named subsets, and `test_id` for version 1 (later versions and groups get stable ids derived from the model set id):
+
+```yaml
+model_sets:
+  - id: 13131313-1313-4131-8131-131313131313
+    project_id: b.emulate-project
+    name: Sample Building Coordination
+    document_version_ids:
+      - urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+      - urn:adsk.wipprod:fs.file:vf.emulate-structural-model?version=1
+    clash_scenario:
+      seed: 42 # same seed and steps → byte-identical files
+      versions:
+        - { added: 40 }
+        - { added: 10, resolved: 15 }
+        - { added: 3, resolved: 5, documents_removed: [], document_status: {} }
+      groups:
+        - { kind: assigned, at_version: 2, clashes: 8, issue_id: 33333333-3333-4333-8333-333333333333 }
+        - { kind: closed, at_version: 2, clashes: 5, reason: VALID_INTERFACE, title: Beams through ceiling }
+      large: false # true emits ~200k clashes in version 1, generated lazily on the first resources request
+    views:
+      - { id: 19191919-1919-4191-8191-191919191919, name: All models, document_version_ids: [...] }
+```
+
+Version steps accept `added`, `resolved`, `documents_added` and `documents_removed` (Data Management version ids; a new version of an existing lineage replaces it in place), `document_status` (`Succeeded`, `Failed`, `Running`, `Skipped` per version id), and `status` (`Successful`, `Partial`, `Failed`; derived from document statuses when omitted). Groups pick the first ungrouped live clashes at `at_version` or take explicit `clashes: [ids]`; closed groups need a `reason` from `OTHER`, `VALID_INTERFACE`, `VALID_PENETRATION`, `MINIMAL_OVERLAP`, `ITEM_CAN_FLEX`, `MODEL_INACCURACY`, `FIELD_FIX`.
+
+`POST /_aps/simulate/modelset-version-added` accepts `{modelSetId, processingMs, added, resolved, documents_added, documents_removed, document_status, status}` and advances the new test from `Pending` through `Processing` to `Success` (or `Failed`). `POST /_aps/simulate/clash-group-assigned` and `/clash-group-closed` accept `{modelSetId | testId | version, clashes: <count | [ids]>, id, issueId, title, description, reason, screenShots, createdBy}` and return the group payload.
+
+### Regions and faults
+
+All Model Coordination routes accept `region` or the legacy `x-ads-region` header (`US` or `EMEA`) and echo the value in `x-emulate-region`; other values return a `BadInput` problem. Faults live under `model_coordination_faults` and are off by default:
+
+```yaml
+model_coordination_timing:
+  processing_ms: 25
+  signed_url_ttl_ms: 60000
+model_coordination_faults:
+  rate_limit_per_minute: 0 # >0 returns 429 problem+json with Retry-After per user token (sliding window)
+  entitlement: true # false, or { b.emulate-project: false }, returns the 403 "Model Coordination is not enabled for this project"
+  resources_extension: {} # { <testId>: sqlite } reports sqlite resources whose URLs serve empty files
+```
 
 ## Webhook Simulation
 
