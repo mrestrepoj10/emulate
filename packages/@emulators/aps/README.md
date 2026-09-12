@@ -1,6 +1,6 @@
 # @emulators/aps
 
-Autodesk Platform Services (APS) emulation with authentication v2, Data Management reads, recursive search, uploads and downloads, simulated Model Derivative translation and inspection, Autodesk Construction Cloud Issues, RFIs, Sheets, and Model Coordination reads, plus active Webhooks delivery and local event simulation.
+Autodesk Platform Services (APS) emulation with authentication v2, Data Management reads, recursive search, uploads and downloads, simulated Model Derivative translation and inspection, Autodesk Construction Cloud Issues, RFIs, Sheets, Model Coordination, and Model Properties (index) reads, plus active Webhooks delivery and local event simulation.
 
 Part of [emulate](https://github.com/vercel-labs/emulate) — local drop-in replacement services for CI and no-network sandboxes.
 
@@ -80,6 +80,11 @@ npm install @emulators/aps
 - `GET /bim360/clash/v3/containers/:containerId/tests/:testId/resources` — issue expiring gzip resource URLs
 - `GET /bim360/clash/v3/containers/:containerId/tests/:testId/clashes/:disposition` — intersect assigned or closed groups with a test
 - `POST /bim360/clash/v3/containers/:containerId/tests/:testId/clashes/:disposition` — batch group clash data for a test
+- `POST /construction/index/v2/projects/:projectId/indexes:batch-status` — create or check Model Properties indexes, optionally with a query
+- `GET /construction/index/v2/projects/:projectId/indexes/:indexId` — poll an index job
+- `GET /construction/index/v2/projects/:projectId/indexes/:indexId/manifest|fields|properties` — download index resources
+- `POST/GET /construction/index/v2/projects/:projectId/indexes/:indexId/queries[/:queryId[/properties]]` — run and poll index queries and download results
+- `POST /construction/index/v2/projects/:projectId/diffs:batch-status` and the matching `diffs/:diffId/...` routes — version-pair diff indexes
 - `POST/GET /webhooks/v1/systems/:system/events/:event/hooks` — create or list event hooks
 - `GET/PATCH/DELETE /webhooks/v1/systems/:system/events/:event/hooks/:hookId` — manage one hook
 - `POST/GET /webhooks/v1/systems/:system/hooks` — create or list hooks for a system
@@ -109,6 +114,7 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/construction/sheets/v1/...` | `$APS_EMULATOR_URL/construction/sheets/v1/...` |
 | `https://developer.api.autodesk.com/bim360/modelset/v3/...`     | `$APS_EMULATOR_URL/bim360/modelset/v3/...`     |
 | `https://developer.api.autodesk.com/bim360/clash/v3/...`        | `$APS_EMULATOR_URL/bim360/clash/v3/...`        |
+| `https://developer.api.autodesk.com/construction/index/v2/...`  | `$APS_EMULATOR_URL/construction/index/v2/...`  |
 | `https://developer.api.autodesk.com/webhooks/v1/...`            | `$APS_EMULATOR_URL/webhooks/v1/...`            |
 | `https://api.userprofile.autodesk.com/userinfo`                 | `$APS_EMULATOR_URL/userinfo`                   |
 
@@ -241,6 +247,9 @@ aps:
   model_coordination_timing:
     processing_ms: 25
     signed_url_ttl_ms: 60000
+  model_properties_index:
+    processing_polls: 1
+    fail_version_urns: []
   model_sets:
     - id: 13131313-1313-4131-8131-131313131313
       project_id: b.emulate-project
@@ -377,6 +386,42 @@ model_coordination_faults:
   entitlement: true # false, or { b.emulate-project: false }, returns the 403 "Model Coordination is not enabled for this project"
   resources_extension: {} # { <testId>: sqlite } reports sqlite resources whose URLs serve empty files
 ```
+
+## Model Properties (index) API
+
+The ACC Model Properties service builds property indexes from Docs file versions. The emulator serves it under the same paths, without the `b.` project prefix, for 3-legged `data:read` tokens:
+
+| Real ACC URL                                                                              | Emulator URL                                                          |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `.../construction/index/v2/projects/:projectId/indexes:batch-status`                      | `$APS_EMULATOR_URL/construction/index/v2/projects/:projectId/indexes:batch-status` |
+| `.../projects/:projectId/indexes/:indexId`                                                | same path                                                             |
+| `.../projects/:projectId/indexes/:indexId/manifest`, `/fields`, `/properties`             | same paths                                                            |
+| `.../projects/:projectId/indexes/:indexId/queries`, `/queries/:queryId[/properties]`      | same paths                                                            |
+| `.../projects/:projectId/diffs:batch-status`, `diffs/:diffId`, `diffs/:diffId/...`        | same paths                                                            |
+
+```bash
+PROJECT_ID="emulate-project"
+VERSION_URN="urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1"
+INDEX_ROOT="$APS_EMULATOR_URL/construction/index/v2/projects/$PROJECT_ID"
+
+STATUS=$(curl -s -X POST "$INDEX_ROOT/indexes:batch-status" -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{\"versions\":[{\"versionUrn\":\"$VERSION_URN\"}]}")
+SELF_URL=$(printf '%s' "$STATUS" | jq -r '.indexes[0].selfUrl')
+curl -s "$SELF_URL" -H "$AUTH" | jq '{state, fieldsUrl, propertiesUrl}'
+curl -s "$SELF_URL/fields" -H "$AUTH" | gunzip -c | head -n 3
+curl -s "$SELF_URL/properties" -H "$AUTH" | gunzip -c | head -n 1
+
+QUERY=$(curl -s -X POST "$SELF_URL/queries" -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"query":{"$gt":[{"$count":"s.views"},0]},"columns":{"id":"s.svf2Id","externalId":"s.externalId"}}')
+QUERY_URL=$(printf '%s' "$QUERY" | jq -r '.selfUrl')
+curl -s "$QUERY_URL/properties" -H "$AUTH" | gunzip -c
+```
+
+Batch status is lazy and idempotent: the same project, version URN, query, and columns always map to the same `indexId` and `queryId`. Jobs are timer-free. Each status observation counts as one poll; a job reports `PROCESSING` with a `retryAt` hint for `processing_polls` observations (default one, so the creating call reports `PROCESSING` and the next poll reports `FINISHED`), then settles into `FINISHED` or `FAILED`. Versions listed in `fail_version_urns`, versions outside the project, and versions without an SVF2 derivative finish `FAILED` with an `errors` entry; versions whose translation is still running stay `PROCESSING`.
+
+Rows derive from the same deterministic Model Derivative fixtures the metadata endpoints serve, so `svf2Id` equals the metadata `objectid`, `externalId` equals the metadata `externalId`, and `lmvId` is deliberately `svf2Id + 1000` so code that confuses SVF and SVF2 ids fails visibly. Rows carry `lineageId`, `databaseId`, `props` keyed by `p<8 hex>` field keys, `propsHash`, `propsIgnored` with the `__parent__` key, and `views` (non-empty only for viewable instances, which also get `geomHash` and `bboxMin`/`bboxMax`). The fields resource includes the synthetic `__name__/name`, `__category__/Category`, `__category__/_RC`, `_RFN`, `_RFT`, `__parent__/parent`, and `__document__` entries with the same keys the real service uses. Fields, properties, and query results are gzip line-delimited JSON (`Content-Type: application/x-ndjson`, `Content-Encoding: gzip`); the manifest is plain JSON.
+
+Queries accept the JSON AST subset consumers typically use: `$and`, `$or`, `$not`, `$eq`, `$ne`, `$lt`, `$le`, `$gt`, `$ge`, `$in`, `$like`, `$isnull`, `$notnull`, `$count`, `$lower`, `$upper`, `$to_string`, `$coalesce`, boolean literals, single-quoted string literals, and `s.<path>` references such as `s.props.p153cb174`, `s.svf2Id`, `s.lmvId`, `s.externalId`, `s.databaseId`, `s.lineageId`, and `s.views`. Columns map `alias: expression` (or `"s.svf2Id": true`). Unsupported operators return `400 BadInput`. Diff indexes compare a version pair by `externalId` and emit `OBJECT_ADDED`, `OBJECT_REMOVED`, and `OBJECT_CHANGED` rows with a `prev` snapshot; because fixture external ids derive from the translated URN, two versions that share a manifest diff to nothing and two distinct manifests diff to removed plus added rows.
 
 ## Webhook Simulation
 

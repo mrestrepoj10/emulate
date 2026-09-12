@@ -25,6 +25,7 @@ import { ingestionRoutes } from "./routes/ingestion.js";
 import { clashRoutes } from "./routes/clash.js";
 import { issueRoutes } from "./routes/issues.js";
 import { modelDerivativeRoutes } from "./routes/model-derivative.js";
+import { modelPropertiesIndexRoutes } from "./routes/model-properties-index.js";
 import { modelSetRoutes } from "./routes/modelset.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { rfiRoutes } from "./routes/rfis.js";
@@ -35,6 +36,7 @@ import { seedAccFromConfig } from "./seed-acc.js";
 import { signedBlobRoutes } from "./signed-blobs.js";
 import { getApsStore } from "./store.js";
 import { setTranslationConfig, setUploadConfig } from "./ingestion-config.js";
+import { getModelPropertiesIndexConfig, setModelPropertiesIndexConfig } from "./model-properties-index.js";
 import {
   appIdentity,
   createWebhookRecord,
@@ -53,6 +55,7 @@ export {
   DEFAULT_UPLOAD_CONFIG,
   DEFAULT_MODEL_COORDINATION_FAULTS,
   DEFAULT_MODEL_COORDINATION_TIMING,
+  DEFAULT_MODEL_PROPERTIES_INDEX_CONFIG,
   DEFAULT_WEBHOOK_TIMING,
   type ApsClashScenarioGroupSeed,
   type ApsClashScenarioSeed,
@@ -62,6 +65,7 @@ export {
   type ApsDocumentItemSeed,
   type ApsModelCoordinationFaultsConfig,
   type ApsModelCoordinationTimingConfig,
+  type ApsModelPropertiesIndexConfig,
   type ApsModelSetViewSeed,
   type ApsSeedConfig,
   type ApsTranslationConfig,
@@ -85,6 +89,7 @@ export {
 } from "./model-coordination.js";
 export { mulberry32, replayClashScenario } from "./clash-scenario.js";
 export { resetModelCoordinationRateLimit } from "./model-coordination-http.js";
+export { getModelPropertiesIndexConfig, setModelPropertiesIndexConfig };
 export { getWebhookTiming, setWebhookTiming, simulateWebhookEvent, webhookDetails } from "./webhooks.js";
 
 function seedDefaults(store: Store, baseUrl: string): void {
@@ -188,6 +193,8 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: ApsSeedCo
 
   seedModelCoordinationFromConfig(aps, store, config);
 
+  if (config.model_properties_index) setModelPropertiesIndexConfig(store, config.model_properties_index);
+
   for (const hook of config.webhooks ?? []) {
     const user = hook.creator_user_email ? aps.users.findOneBy("email", hook.creator_user_email) : undefined;
     const clientId = hook.creator_client_id ?? DEFAULT_CONFIDENTIAL_CLIENT_ID;
@@ -227,6 +234,7 @@ export const apsPlugin: ServicePlugin = {
     dataManagementRoutes(ctx);
     ingestionRoutes(ctx);
     modelDerivativeRoutes(ctx);
+    modelPropertiesIndexRoutes(ctx);
     modelSetRoutes(ctx);
     clashRoutes(ctx);
     issueRoutes(ctx);

@@ -58,8 +58,8 @@ export const MODEL_SET_REGIONS = ["US", "EMEA"] as const;
 
 /**
  * Clash instance `lvid`/`rvid` are SVF (LMV) viewer ids, not the SVF2 ids that Model Derivative metadata reports.
- * The emulator derives them as metadata `objectid` + LMV_ID_OFFSET. This value MUST match `LMV_ID_OFFSET` in
- * model-properties-index.ts so the Model Properties index bridge (`lmvId` → `svf2Id` → `externalId`) round-trips.
+ * The emulator derives them as metadata `objectid` + LMV_ID_OFFSET. model-properties-index.ts uses the same
+ * constant for `lmvId`, so the Model Properties index bridge (`lmvId` → `svf2Id` → `externalId`) round-trips.
  */
 export const LMV_ID_OFFSET = 1000;
 

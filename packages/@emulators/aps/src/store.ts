@@ -15,6 +15,8 @@ import type {
   ApsModelSetVersion,
   ApsModelSetView,
   ApsProject,
+  ApsPropertyIndex,
+  ApsPropertyIndexQuery,
   ApsRfi,
   ApsRfiAttribute,
   ApsRfiType,
@@ -61,6 +63,8 @@ export interface ApsStore {
   clashTests: Collection<ApsClashTest>;
   clashGroups: Collection<ApsClashGroup>;
   signedBlobs: Collection<ApsSignedBlob>;
+  propertyIndexes: Collection<ApsPropertyIndex>;
+  propertyIndexQueries: Collection<ApsPropertyIndexQuery>;
 }
 
 export function getApsStore(store: Store): ApsStore {
@@ -108,5 +112,7 @@ export function getApsStore(store: Store): ApsStore {
     clashTests: store.collection<ApsClashTest>("aps.clashTests", ["project_id", "test_id", "model_set_id"]),
     clashGroups: store.collection<ApsClashGroup>("aps.clashGroups", ["model_set_id", "group_id", "disposition"]),
     signedBlobs: store.collection<ApsSignedBlob>("aps.signedBlobs", ["blob_id"]),
+    propertyIndexes: store.collection<ApsPropertyIndex>("aps.propertyIndexes", ["project_id", "index_id"]),
+    propertyIndexQueries: store.collection<ApsPropertyIndexQuery>("aps.propertyIndexQueries", ["index_id", "query_id"]),
   };
 }

@@ -247,6 +247,11 @@ aps:
     autoTranslateOnVersionAdd: true
     durationMs: 15000
     failForExtensions: [zip]
+  # Model Properties (index) knobs: status observations that report PROCESSING before a job
+  # finishes, and version URNs whose indexes and diffs finish FAILED.
+  model_properties_index:
+    processing_polls: 1
+    fail_version_urns: []
   document_folders:
     - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
       project_id: b.emulate-project
