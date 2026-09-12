@@ -312,6 +312,22 @@ export interface ApsModelSetDocumentVersion {
   originalSeedFileVersionName: string;
 }
 
+/** Normalized clash scenario stored on a model set. Result files derive from it deterministically. */
+export interface ApsClashScenario {
+  seed: number;
+  large: boolean;
+  versions: ApsClashScenarioVersion[];
+}
+
+export interface ApsClashScenarioVersion {
+  added: number;
+  resolved: number;
+  /** Whether this version's clash test completed. Failed versions do not advance the clash pool. */
+  succeeded: boolean;
+  /** Document lineages (item IDs) that participate in clash testing for this version, in document index order. */
+  lineages: string[];
+}
+
 export interface ApsModelSet extends Entity {
   project_id: string;
   model_set_id: string;
@@ -325,6 +341,7 @@ export interface ApsModelSet extends Entity {
   modified_time: string;
   disabled: boolean;
   deleted: boolean;
+  clash_scenario: ApsClashScenario;
 }
 
 export interface ApsModelSetVersion extends Entity {
@@ -339,6 +356,13 @@ export interface ApsModelSetView extends Entity {
   model_set_id: string;
   version: number;
   view_id: string;
+  name: string;
+  description: string;
+  created_by: string;
+  created_time: string;
+  /** Document lineages (item IDs) the view selects. Each version resolves them against its own documents. */
+  lineages: string[];
+  /** Version URNs of the documents present in this version of the view. */
   document_versions: string[];
 }
 
@@ -351,14 +375,23 @@ export interface ApsClashTest extends Entity {
   completed_on: string | null;
 }
 
+export type ApsClashGroupDisposition = "assigned" | "closed";
+
 export interface ApsClashGroup extends Entity {
-  test_id: string;
-  disposition: "assigned" | "closed";
+  model_set_id: string;
+  disposition: ApsClashGroupDisposition;
   group_id: string;
-  original_clash_test_id: string;
+  /** Clash test the group was created against. */
+  clash_test_id: string;
   created_at_version: number;
-  existing: number[];
-  resolved: number[];
+  issue_id: string | null;
+  title: string;
+  description: string;
+  reason: string | null;
+  screen_shots: string[];
+  created_by: string;
+  created_on: string;
+  clashes: number[];
 }
 
 export interface ApsSignedBlob extends Entity {
@@ -366,4 +399,34 @@ export interface ApsSignedBlob extends Entity {
   filename: string;
   content_type: string;
   content_base64: string;
+}
+
+export type ApsPropertyIndexType = "INDEX" | "DIFF";
+export type ApsPropertyIndexState = "PROCESSING" | "FINISHED" | "FAILED";
+
+export interface ApsPropertyIndex extends Entity {
+  project_id: string;
+  index_id: string;
+  type: ApsPropertyIndexType;
+  version_urns: string[];
+  prev_version_urns: string[];
+  cur_version_urns: string[];
+  state: ApsPropertyIndexState;
+  polls: number;
+  failure: string | null;
+  requested_at: string;
+  state_changed_at: string;
+}
+
+export interface ApsPropertyIndexQuery extends Entity {
+  project_id: string;
+  index_id: string;
+  query_id: string;
+  query: unknown;
+  columns: Record<string, unknown> | null;
+  state: ApsPropertyIndexState;
+  polls: number;
+  failure: string | null;
+  requested_at: string;
+  state_changed_at: string;
 }

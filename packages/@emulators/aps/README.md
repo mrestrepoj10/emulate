@@ -1,6 +1,6 @@
 # @emulators/aps
 
-Autodesk Platform Services (APS) emulation with authentication v2, Data Management reads, recursive search, uploads and downloads, simulated Model Derivative translation and inspection, Autodesk Construction Cloud Issues, RFIs, Sheets, and Model Coordination reads, plus active Webhooks delivery and local event simulation.
+Autodesk Platform Services (APS) emulation with authentication v2, Data Management reads, recursive search, uploads and downloads, simulated Model Derivative translation and inspection, Autodesk Construction Cloud Issues, RFIs, Sheets, Model Coordination, and Model Properties (index) reads, plus active Webhooks delivery and local event simulation.
 
 Part of [emulate](https://github.com/vercel-labs/emulate) — local drop-in replacement services for CI and no-network sandboxes.
 
@@ -64,11 +64,27 @@ npm install @emulators/aps
 - `GET /construction/sheets/v1/projects/:projectId/collections` — list Sheet collections
 - `GET /construction/sheets/v1/projects/:projectId/collections/:collectionId` — get a Sheet collection
 - `GET /bim360/modelset/v3/containers/:containerId/modelsets` — list Model Coordination model sets
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId` — get a model set
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/views` — list named model set views
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions` — list model set versions
 - `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/latest` — get the latest model set version
-- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/views` — list model set views
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version` — get a model set version with document statuses
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/views` — list view versions
+- `GET /bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/views/:viewId` — get one view version
 - `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/tests` — list clash tests
+- `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/tests` — list clash tests of one version
+- `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/clashes/assigned` — search assigned clash groups
+- `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/clashes/closed` — search closed clash groups
+- `GET /bim360/clash/v3/containers/:containerId/modelsets/:modelSetId/clashes/grouped` — list grouped clash IDs
+- `GET /bim360/clash/v3/containers/:containerId/tests/:testId` — get a clash test
 - `GET /bim360/clash/v3/containers/:containerId/tests/:testId/resources` — issue expiring gzip resource URLs
-- `GET /bim360/clash/v3/containers/:containerId/tests/:testId/clashes/:disposition` — list assigned or closed clash groups
+- `GET /bim360/clash/v3/containers/:containerId/tests/:testId/clashes/:disposition` — intersect assigned or closed groups with a test
+- `POST /bim360/clash/v3/containers/:containerId/tests/:testId/clashes/:disposition` — batch group clash data for a test
+- `POST /construction/index/v2/projects/:projectId/indexes:batch-status` — create or check Model Properties indexes, optionally with a query
+- `GET /construction/index/v2/projects/:projectId/indexes/:indexId` — poll an index job
+- `GET /construction/index/v2/projects/:projectId/indexes/:indexId/manifest|fields|properties` — download index resources
+- `POST/GET /construction/index/v2/projects/:projectId/indexes/:indexId/queries[/:queryId[/properties]]` — run and poll index queries and download results
+- `POST /construction/index/v2/projects/:projectId/diffs:batch-status` and the matching `diffs/:diffId/...` routes — version-pair diff indexes
 - `POST/GET /webhooks/v1/systems/:system/events/:event/hooks` — create or list event hooks
 - `GET/PATCH/DELETE /webhooks/v1/systems/:system/events/:event/hooks/:hookId` — manage one hook
 - `POST/GET /webhooks/v1/systems/:system/hooks` — create or list hooks for a system
@@ -79,7 +95,8 @@ npm install @emulators/aps
 - `POST /_aps/simulate/extraction-finished` — emit from a seeded manifest
 - `POST /_aps/simulate/translation-complete` — finish a live translation job and emit its terminal webhook
 - `POST /_aps/simulate/issue-created` — emit from a seeded ACC issue
-- `POST /_aps/simulate/modelset-version-added` — add a model set version and run its clash test
+- `POST /_aps/simulate/modelset-version-added` — add a model set version (optionally a scenario step) and run its clash test
+- `POST /_aps/simulate/clash-group-assigned` and `/clash-group-closed` — create assigned or closed clash groups
 
 ## URL Mapping
 
@@ -97,6 +114,7 @@ Real APS paths map 1:1 onto the emulator:
 | `https://developer.api.autodesk.com/construction/sheets/v1/...` | `$APS_EMULATOR_URL/construction/sheets/v1/...` |
 | `https://developer.api.autodesk.com/bim360/modelset/v3/...`     | `$APS_EMULATOR_URL/bim360/modelset/v3/...`     |
 | `https://developer.api.autodesk.com/bim360/clash/v3/...`        | `$APS_EMULATOR_URL/bim360/clash/v3/...`        |
+| `https://developer.api.autodesk.com/construction/index/v2/...`  | `$APS_EMULATOR_URL/construction/index/v2/...`  |
 | `https://developer.api.autodesk.com/webhooks/v1/...`            | `$APS_EMULATOR_URL/webhooks/v1/...`            |
 | `https://api.userprofile.autodesk.com/userinfo`                 | `$APS_EMULATOR_URL/userinfo`                   |
 
@@ -229,6 +247,9 @@ aps:
   model_coordination_timing:
     processing_ms: 25
     signed_url_ttl_ms: 60000
+  model_properties_index:
+    processing_polls: 1
+    fail_version_urns: []
   model_sets:
     - id: 13131313-1313-4131-8131-131313131313
       project_id: b.emulate-project
@@ -305,14 +326,102 @@ ACCESS_TOKEN="<3-legged-access-token>"
 curl "$APS_EMULATOR_URL/bim360/modelset/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/versions/latest" \
   -H "Authorization: Bearer $ACCESS_TOKEN"
 
-TEST_ID=$(curl -s "$APS_EMULATOR_URL/bim360/clash/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/tests?status=Success" \
+TEST_ID=$(curl -s "$APS_EMULATOR_URL/bim360/clash/v3/containers/$PROJECT_ID/modelsets/$MODEL_SET_ID/versions/3/tests?status=Success" \
   -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r '.tests[0].id')
 RESOURCE_URL=$(curl -s "$APS_EMULATOR_URL/bim360/clash/v3/containers/$PROJECT_ID/tests/$TEST_ID/resources" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r '.resources[2].url')
-curl -s "$RESOURCE_URL" | gunzip -c
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq -r '.resources[0].url')
+curl -s "$RESOURCE_URL" | gunzip -c | tail -c +4 | jq '.clashes | length'
 ```
 
-Resources are three deterministic JSON gzip artifacts with expiring signed URLs. Re-request resources for fresh URLs. `POST /_aps/simulate/modelset-version-added` adds a version and advances its one clash test from `Pending` through `Processing` to `Success`.
+The default seed carries one model set with three versions, one successful clash test per version, two named views (`All models` and `Architecture only`), one assigned clash group linked to the seeded issue `33333333-3333-4333-8333-333333333333`, and one closed group with reason `VALID_INTERFACE`. Version 1 reports 40 `New` clashes, version 2 adds 10 and resolves 15, version 3 adds 3 and resolves 5.
+
+### Result files
+
+Each successful test exposes three resources (`scope-version-clash.2.0.0`, `scope-version-clash-instance.2.0.0`, `scope-version-document.2.0.0`) with extension `json.gz`, an expiring signed URL, and `validUntil`. Like the real service, every file is gzip of a UTF-8 BOM followed by a wrapper object: `{"clashes":[…]}`, `{"instances":[…]}`, and `{"documents":[…]}`. Strip the first character before `JSON.parse`. Re-request resources for fresh URLs after they expire.
+
+- Clash `id` and the stable object ids `loid`/`roid` never change across versions. `status` is `New` when a clash first appears, `Existing` while it persists, and `Resolved` exactly once before it disappears.
+- Instance `ldid`/`rdid` index the documents file, whose `urn` equals the model set version's `versionUrn`. Instance `lvid`/`rvid` are LMV viewer ids: Model Derivative metadata `objectid` of that document version plus `LMV_ID_OFFSET` (1000), the same offset the Model Properties index emulation uses for `lmvId`.
+- Documents that are `Failed`, `Skipped`, or `Running` in a version are excluded from that version's files. Clashes between a document pair that is out of scope are not reported until both documents are clashed again. A `Failed` version has a `Failed` test, returns `409` from `resources`, and does not advance the clash pool.
+
+### Scenario seeds
+
+Each `model_sets` entry accepts a `clash_scenario` that drives every version deterministically, `views` for named subsets, and `test_id` for version 1 (later versions and groups get stable ids derived from the model set id):
+
+```yaml
+model_sets:
+  - id: 13131313-1313-4131-8131-131313131313
+    project_id: b.emulate-project
+    name: Sample Building Coordination
+    document_version_ids:
+      - urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+      - urn:adsk.wipprod:fs.file:vf.emulate-structural-model?version=1
+    clash_scenario:
+      seed: 42 # same seed and steps → byte-identical files
+      versions:
+        - { added: 40 }
+        - { added: 10, resolved: 15 }
+        - { added: 3, resolved: 5, documents_removed: [], document_status: {} }
+      groups:
+        - { kind: assigned, at_version: 2, clashes: 8, issue_id: 33333333-3333-4333-8333-333333333333 }
+        - { kind: closed, at_version: 2, clashes: 5, reason: VALID_INTERFACE, title: Beams through ceiling }
+      large: false # true emits ~200k clashes in version 1, generated lazily on the first resources request
+    views:
+      - { id: 19191919-1919-4191-8191-191919191919, name: All models, document_version_ids: [...] }
+```
+
+Version steps accept `added`, `resolved`, `documents_added` and `documents_removed` (Data Management version ids; a new version of an existing lineage replaces it in place), `document_status` (`Succeeded`, `Failed`, `Running`, `Skipped` per version id), and `status` (`Successful`, `Partial`, `Failed`; derived from document statuses when omitted). Groups pick the first ungrouped live clashes at `at_version` or take explicit `clashes: [ids]`; closed groups need a `reason` from `OTHER`, `VALID_INTERFACE`, `VALID_PENETRATION`, `MINIMAL_OVERLAP`, `ITEM_CAN_FLEX`, `MODEL_INACCURACY`, `FIELD_FIX`.
+
+`POST /_aps/simulate/modelset-version-added` accepts `{modelSetId, processingMs, added, resolved, documents_added, documents_removed, document_status, status}` and advances the new test from `Pending` through `Processing` to `Success` (or `Failed`). `POST /_aps/simulate/clash-group-assigned` and `/clash-group-closed` accept `{modelSetId | testId | version, clashes: <count | [ids]>, id, issueId, title, description, reason, screenShots, createdBy}` and return the group payload.
+
+### Regions and faults
+
+All Model Coordination routes accept `region` or the legacy `x-ads-region` header (`US` or `EMEA`) and echo the value in `x-emulate-region`; other values return a `BadInput` problem. Faults live under `model_coordination_faults` and are off by default:
+
+```yaml
+model_coordination_timing:
+  processing_ms: 25
+  signed_url_ttl_ms: 60000
+model_coordination_faults:
+  rate_limit_per_minute: 0 # >0 returns 429 problem+json with Retry-After per user token (sliding window)
+  entitlement: true # false, or { b.emulate-project: false }, returns the 403 "Model Coordination is not enabled for this project"
+  resources_extension: {} # { <testId>: sqlite } reports sqlite resources whose URLs serve empty files
+```
+
+## Model Properties (index) API
+
+The ACC Model Properties service builds property indexes from Docs file versions. The emulator serves it under the same paths, without the `b.` project prefix, for 3-legged `data:read` tokens:
+
+| Real ACC URL                                                                              | Emulator URL                                                          |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `.../construction/index/v2/projects/:projectId/indexes:batch-status`                      | `$APS_EMULATOR_URL/construction/index/v2/projects/:projectId/indexes:batch-status` |
+| `.../projects/:projectId/indexes/:indexId`                                                | same path                                                             |
+| `.../projects/:projectId/indexes/:indexId/manifest`, `/fields`, `/properties`             | same paths                                                            |
+| `.../projects/:projectId/indexes/:indexId/queries`, `/queries/:queryId[/properties]`      | same paths                                                            |
+| `.../projects/:projectId/diffs:batch-status`, `diffs/:diffId`, `diffs/:diffId/...`        | same paths                                                            |
+
+```bash
+PROJECT_ID="emulate-project"
+VERSION_URN="urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1"
+INDEX_ROOT="$APS_EMULATOR_URL/construction/index/v2/projects/$PROJECT_ID"
+
+STATUS=$(curl -s -X POST "$INDEX_ROOT/indexes:batch-status" -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{\"versions\":[{\"versionUrn\":\"$VERSION_URN\"}]}")
+SELF_URL=$(printf '%s' "$STATUS" | jq -r '.indexes[0].selfUrl')
+curl -s "$SELF_URL" -H "$AUTH" | jq '{state, fieldsUrl, propertiesUrl}'
+curl -s "$SELF_URL/fields" -H "$AUTH" | gunzip -c | head -n 3
+curl -s "$SELF_URL/properties" -H "$AUTH" | gunzip -c | head -n 1
+
+QUERY=$(curl -s -X POST "$SELF_URL/queries" -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"query":{"$gt":[{"$count":"s.views"},0]},"columns":{"id":"s.svf2Id","externalId":"s.externalId"}}')
+QUERY_URL=$(printf '%s' "$QUERY" | jq -r '.selfUrl')
+curl -s "$QUERY_URL/properties" -H "$AUTH" | gunzip -c
+```
+
+Batch status is lazy and idempotent: the same project, version URN, query, and columns always map to the same `indexId` and `queryId`. Jobs are timer-free. Each status observation counts as one poll; a job reports `PROCESSING` with a `retryAt` hint for `processing_polls` observations (default one, so the creating call reports `PROCESSING` and the next poll reports `FINISHED`), then settles into `FINISHED` or `FAILED`. Versions listed in `fail_version_urns`, versions outside the project, and versions without an SVF2 derivative finish `FAILED` with an `errors` entry; versions whose translation is still running stay `PROCESSING`.
+
+Rows derive from the same deterministic Model Derivative fixtures the metadata endpoints serve, so `svf2Id` equals the metadata `objectid`, `externalId` equals the metadata `externalId`, and `lmvId` is deliberately `svf2Id + 1000` so code that confuses SVF and SVF2 ids fails visibly. Rows carry `lineageId`, `databaseId`, `props` keyed by `p<8 hex>` field keys, `propsHash`, `propsIgnored` with the `__parent__` key, and `views` (non-empty only for viewable instances, which also get `geomHash` and `bboxMin`/`bboxMax`). The fields resource includes the synthetic `__name__/name`, `__category__/Category`, `__category__/_RC`, `_RFN`, `_RFT`, `__parent__/parent`, and `__document__` entries with the same keys the real service uses. Fields, properties, and query results are gzip line-delimited JSON (`Content-Type: application/x-ndjson`, `Content-Encoding: gzip`); the manifest is plain JSON.
+
+Queries accept the JSON AST subset consumers typically use: `$and`, `$or`, `$not`, `$eq`, `$ne`, `$lt`, `$le`, `$gt`, `$ge`, `$in`, `$like`, `$isnull`, `$notnull`, `$count`, `$lower`, `$upper`, `$to_string`, `$coalesce`, boolean literals, single-quoted string literals, and `s.<path>` references such as `s.props.p153cb174`, `s.svf2Id`, `s.lmvId`, `s.externalId`, `s.databaseId`, `s.lineageId`, and `s.views`. Columns map `alias: expression` (or `"s.svf2Id": true`). Unsupported operators return `400 BadInput`. Diff indexes compare a version pair by `externalId` and emit `OBJECT_ADDED`, `OBJECT_REMOVED`, and `OBJECT_CHANGED` rows with a `prev` snapshot; because fixture external ids derive from the translated URN, two versions that share a manifest diff to nothing and two distinct manifests diff to removed plus added rows.
 
 ## Webhook Simulation
 

@@ -6,9 +6,12 @@ import {
   modelSetPayload,
   modelSetSummaryPayload,
   modelSetVersionPayload,
+  modelSetViewSummaryPayload,
+  modelSetViewVersionPayload,
 } from "../model-coordination.js";
 import {
   booleanQuery,
+  coordinationMiddleware,
   coordinationPage,
   coordinationProject,
   modelSetForProject,
@@ -38,6 +41,7 @@ function versionForModelSet(
 export function modelSetRoutes({ app, store }: RouteContext): void {
   const aps = getApsStore(store);
   app.use("/bim360/modelset/v3/*", apsAuth(store, { scopes: ["data:read"], requireUser: true }));
+  app.use("/bim360/modelset/v3/containers/:containerId/*", coordinationMiddleware(store, aps));
 
   app.get("/bim360/modelset/v3/containers/:containerId/modelsets", (c) => {
     const project = coordinationProject(c, aps);
@@ -69,6 +73,21 @@ export function modelSetRoutes({ app, store }: RouteContext): void {
     const modelSet = modelSetForProject(c, aps, project);
     if (modelSet instanceof Response) return modelSet;
     return c.json(modelSetPayload(aps, modelSet));
+  });
+
+  app.get("/bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/views", (c) => {
+    const project = coordinationProject(c, aps);
+    if (project instanceof Response) return project;
+    const modelSet = modelSetForProject(c, aps, project);
+    if (modelSet instanceof Response) return modelSet;
+    const seen = new Set<string>();
+    const views = aps.modelSetViews
+      .findBy("model_set_id", modelSet.model_set_id)
+      .sort((left, right) => left.id - right.id)
+      .filter((view) => !seen.has(view.view_id) && seen.add(view.view_id));
+    const page = coordinationPage(c, views);
+    if (page instanceof Response) return page;
+    return c.json({ page: page.page, modelSetViews: page.items.map((view) => modelSetViewSummaryPayload(aps, view)) });
   });
 
   app.get("/bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions", (c) => {
@@ -123,17 +142,27 @@ export function modelSetRoutes({ app, store }: RouteContext): void {
     if (version instanceof Response) return version;
     const views = aps.modelSetViews
       .findBy("model_set_id", modelSet.model_set_id)
-      .filter((view) => view.version === version.version);
+      .filter((view) => view.version === version.version)
+      .sort((left, right) => left.id - right.id);
     const page = coordinationPage(c, views);
     if (page instanceof Response) return page;
     return c.json({
       page: page.page,
-      modelSetViewVersions: page.items.map((view) => ({
-        viewId: view.view_id,
-        modelSetId: view.model_set_id,
-        documentVersions: [...view.document_versions],
-        version: view.version,
-      })),
+      modelSetViewVersions: page.items.map((view) => modelSetViewVersionPayload(view, version)),
     });
+  });
+
+  app.get("/bim360/modelset/v3/containers/:containerId/modelsets/:modelSetId/versions/:version/views/:viewId", (c) => {
+    const project = coordinationProject(c, aps);
+    if (project instanceof Response) return project;
+    const modelSet = modelSetForProject(c, aps, project);
+    if (modelSet instanceof Response) return modelSet;
+    const version = versionForModelSet(c, aps, modelSet, c.req.param("version"));
+    if (version instanceof Response) return version;
+    const view = aps.modelSetViews
+      .findBy("model_set_id", modelSet.model_set_id)
+      .find((candidate) => candidate.version === version.version && candidate.view_id === c.req.param("viewId"));
+    if (!view) return notFound(c, "The requested model set view version");
+    return c.json(modelSetViewVersionPayload(view, version));
   });
 }

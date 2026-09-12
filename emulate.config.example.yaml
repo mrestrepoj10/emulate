@@ -247,6 +247,11 @@ aps:
     autoTranslateOnVersionAdd: true
     durationMs: 15000
     failForExtensions: [zip]
+  # Model Properties (index) knobs: status observations that report PROCESSING before a job
+  # finishes, and version URNs whose indexes and diffs finish FAILED.
+  model_properties_index:
+    processing_polls: 1
+    fail_version_urns: []
   document_folders:
     - id: urn:adsk.wipprod:fs.folder:co.emulate-documents
       project_id: b.emulate-project
@@ -266,6 +271,54 @@ aps:
       project_id: b.emulate-project
       version_number: 1
       display_name: sample.rvt
+  # Model Coordination model sets. Document versions must be translated (have a manifest); the two below are
+  # seeded by default. Each scenario version becomes a model set version with one clash test.
+  model_sets:
+    - id: 13131313-1313-4131-8131-131313131313
+      project_id: b.emulate-project
+      name: Sample Building Coordination
+      folder_urns:
+        - urn:adsk.wipprod:fs.folder:co.emulate-coordination
+      document_version_ids:
+        - urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+        - urn:adsk.wipprod:fs.file:vf.emulate-structural-model?version=1
+      test_id: 16161616-1616-4161-8161-161616161616 # clash test id of version 1
+      clash_scenario:
+        seed: 42 # same seed and steps → byte-identical result files
+        versions:
+          - { added: 40 } # v1: 40 New
+          - { added: 10, resolved: 15 } # v2: 10 New, 25 Existing, 15 Resolved
+          - { added: 3, resolved: 5 } # v3: 3 New, 30 Existing, 5 Resolved
+          # Steps also accept documents_added / documents_removed (DM version ids),
+          # document_status: { <version id>: Succeeded|Failed|Running|Skipped }, and status: Successful|Partial|Failed.
+        groups:
+          - kind: assigned
+            at_version: 2
+            clashes: 8 # count of live ungrouped clashes, or an explicit list of clash ids
+            issue_id: 33333333-3333-4333-8333-333333333333
+          - kind: closed
+            at_version: 2
+            clashes: 5
+            reason: VALID_INTERFACE # OTHER, VALID_INTERFACE, VALID_PENETRATION, MINIMAL_OVERLAP, ITEM_CAN_FLEX, MODEL_INACCURACY, FIELD_FIX
+            title: Structural beams through architectural ceiling
+        large: false # true emits ~200k clashes in version 1 for size stress tests
+      views:
+        - id: 19191919-1919-4191-8191-191919191919
+          name: All models
+          document_version_ids:
+            - urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+            - urn:adsk.wipprod:fs.file:vf.emulate-structural-model?version=1
+        - name: Architecture only
+          document_version_ids:
+            - urn:adsk.wipprod:fs.file:vf.emulate-sample-model?version=1
+  model_coordination_timing:
+    processing_ms: 25
+    signed_url_ttl_ms: 60000
+  # Model Coordination faults are off by default.
+  model_coordination_faults:
+    rate_limit_per_minute: 0 # >0 returns 429 with Retry-After per user token
+    entitlement: true # false, or { b.emulate-project: false }, returns the 403 entitlement problem
+    resources_extension: {} # { <test id>: sqlite } serves empty sqlite resources for that test
   webhooks:
     - system: data
       event: dm.version.added
