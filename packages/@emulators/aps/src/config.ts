@@ -254,6 +254,7 @@ export interface ApsSeedConfig {
   translation?: Partial<ApsTranslationConfig>;
   webhook_timing?: Partial<ApsWebhookTimingConfig>;
   model_coordination_timing?: Partial<ApsModelCoordinationTimingConfig>;
+  model_coordination_faults?: Partial<ApsModelCoordinationFaultsConfig>;
   document_folders?: ApsDocumentFolderSeed[];
   document_items?: ApsDocumentItemSeed[];
   document_versions?: ApsDocumentVersionSeed[];
@@ -271,7 +272,10 @@ export interface ApsSeedConfig {
     created_time?: string;
     disabled?: boolean;
     deleted?: boolean;
+    /** Clash test ID for model set version 1. Later versions derive stable IDs from the model set ID. */
     test_id?: string;
+    clash_scenario?: ApsClashScenarioSeed;
+    views?: ApsModelSetViewSeed[];
   }>;
   webhooks?: Array<{
     system: string;
@@ -308,6 +312,77 @@ export interface ApsModelCoordinationTimingConfig {
   signed_url_ttl_ms: number;
 }
 
+export type ApsModelSetDocumentStatus = "Succeeded" | "Failed" | "Running" | "Skipped";
+export type ApsModelSetVersionSeedStatus = "Successful" | "Partial" | "Failed";
+export type ApsClashGroupKind = "assigned" | "closed";
+
+export const CLASH_CLOSE_REASONS = [
+  "OTHER",
+  "VALID_INTERFACE",
+  "VALID_PENETRATION",
+  "MINIMAL_OVERLAP",
+  "ITEM_CAN_FLEX",
+  "MODEL_INACCURACY",
+  "FIELD_FIX",
+] as const;
+export type ApsClashCloseReason = (typeof CLASH_CLOSE_REASONS)[number];
+
+/** One model set version in a deterministic clash scenario. */
+export interface ApsClashScenarioVersionSeed {
+  /** Clashes that first appear (status New) in this version. */
+  added?: number;
+  /** Carried clashes that are reported once as Resolved in this version and then disappear. */
+  resolved?: number;
+  /** Data Management version IDs joining the model set in this version (replacing older versions of the same lineage). */
+  documents_added?: string[];
+  /** Data Management version IDs leaving the model set in this version. */
+  documents_removed?: string[];
+  /** Per-document processing status keyed by Data Management version ID. Defaults to Succeeded. */
+  document_status?: Record<string, ApsModelSetDocumentStatus>;
+  /** Version status. Defaults to Successful when every document Succeeded, Failed when none did, else Partial. */
+  status?: ApsModelSetVersionSeedStatus;
+}
+
+export interface ApsClashScenarioGroupSeed {
+  kind: ApsClashGroupKind;
+  /** Model set version whose clash test the group was created against. */
+  at_version: number;
+  /** Number of live clashes to pick deterministically, or explicit clash IDs. */
+  clashes: number | number[];
+  id?: string;
+  issue_id?: string;
+  title?: string;
+  description?: string;
+  reason?: ApsClashCloseReason;
+  screen_shots?: string[];
+  created_by?: string;
+}
+
+export interface ApsClashScenarioSeed {
+  /** PRNG seed. The same seed and steps always produce byte-identical result files. */
+  seed?: number;
+  versions: ApsClashScenarioVersionSeed[];
+  groups?: ApsClashScenarioGroupSeed[];
+  /** Emit roughly 200k clashes in the first version for size stress tests. Files are generated lazily. */
+  large?: boolean;
+}
+
+export interface ApsModelSetViewSeed {
+  id?: string;
+  name: string;
+  description?: string;
+  document_version_ids: string[];
+}
+
+export interface ApsModelCoordinationFaultsConfig {
+  /** Per-user sliding-window request cap across all Model Coordination routes. 0 disables the limit. */
+  rate_limit_per_minute: number;
+  /** `false` disables Model Coordination for every project; a map keyed by project ID (with or without `b.`) targets projects. */
+  entitlement: boolean | Record<string, boolean>;
+  /** Resource file extension overrides keyed by clash test ID. `sqlite` serves empty files. */
+  resources_extension: Record<string, "json.gz" | "sqlite">;
+}
+
 export interface ApsUploadConfig {
   maxObjectBytes: number;
 }
@@ -331,6 +406,35 @@ export const DEFAULT_TRANSLATION_CONFIG: ApsTranslationConfig = {
 export const DEFAULT_MODEL_COORDINATION_TIMING: ApsModelCoordinationTimingConfig = {
   processing_ms: 25,
   signed_url_ttl_ms: 60_000,
+};
+
+export const DEFAULT_MODEL_COORDINATION_FAULTS: ApsModelCoordinationFaultsConfig = {
+  rate_limit_per_minute: 0,
+  entitlement: true,
+  resources_extension: {},
+};
+
+export const DEFAULT_CLASH_SCENARIO: ApsClashScenarioSeed = {
+  seed: 42,
+  versions: [{ added: 40 }, { added: 10, resolved: 15 }, { added: 3, resolved: 5 }],
+  groups: [
+    {
+      kind: "assigned",
+      at_version: 2,
+      clashes: 8,
+      id: "17171717-1717-4171-8171-171717171717",
+      issue_id: "33333333-3333-4333-8333-333333333333",
+    },
+    {
+      kind: "closed",
+      at_version: 2,
+      clashes: 5,
+      id: "18181818-1818-4181-8181-181818181818",
+      title: "Structural beams through architectural ceiling",
+      description: "The ceiling grid is expected to wrap the beams.",
+      reason: "VALID_INTERFACE",
+    },
+  ],
 };
 
 export const DEFAULT_WEBHOOK_TIMING: ApsWebhookTimingConfig = {
@@ -848,6 +952,19 @@ export const DEFAULT_DATA_SEED = {
       created_by: "testuser@autodesk.local",
       created_time: DEFAULT_ACC_TIMESTAMP,
       test_id: "16161616-1616-4161-8161-161616161616",
+      clash_scenario: DEFAULT_CLASH_SCENARIO,
+      views: [
+        {
+          id: "19191919-1919-4191-8191-191919191919",
+          name: "All models",
+          document_version_ids: [DEFAULT_WEBHOOK_VERSION_ID, DEFAULT_SECOND_DOCUMENT_VERSION_ID],
+        },
+        {
+          id: "1a1a1a1a-1a1a-41a1-81a1-1a1a1a1a1a1a",
+          name: "Architecture only",
+          document_version_ids: [DEFAULT_WEBHOOK_VERSION_ID],
+        },
+      ],
     },
   ],
 } satisfies ApsSeedConfig;

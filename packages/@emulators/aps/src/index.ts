@@ -3,8 +3,10 @@ import type { AppEnv, RouteContext, ServicePlugin, Store, TokenMap, WebhookDispa
 import { DEFAULT_DATA_SEED, type ApsSeedConfig } from "./config.js";
 import { seedDocumentTreeFromConfig } from "./dm-tree.js";
 import {
+  getModelCoordinationFaults,
   getModelCoordinationTiming,
   seedModelCoordinationFromConfig,
+  setModelCoordinationFaults,
   setModelCoordinationTiming,
 } from "./model-coordination.js";
 import {
@@ -44,15 +46,23 @@ import {
 
 export { getApsStore, type ApsStore } from "./store.js";
 export {
+  CLASH_CLOSE_REASONS,
+  DEFAULT_CLASH_SCENARIO,
   DEFAULT_DATA_SEED,
   DEFAULT_TRANSLATION_CONFIG,
   DEFAULT_UPLOAD_CONFIG,
+  DEFAULT_MODEL_COORDINATION_FAULTS,
   DEFAULT_MODEL_COORDINATION_TIMING,
   DEFAULT_WEBHOOK_TIMING,
+  type ApsClashScenarioGroupSeed,
+  type ApsClashScenarioSeed,
+  type ApsClashScenarioVersionSeed,
   type ApsDocumentVersionSeed,
   type ApsDocumentFolderSeed,
   type ApsDocumentItemSeed,
+  type ApsModelCoordinationFaultsConfig,
   type ApsModelCoordinationTimingConfig,
+  type ApsModelSetViewSeed,
   type ApsSeedConfig,
   type ApsTranslationConfig,
   type ApsUploadConfig,
@@ -60,7 +70,21 @@ export {
 } from "./config.js";
 export * from "./entities.js";
 export { getTranslationConfig, getUploadConfig, setTranslationConfig, setUploadConfig } from "./ingestion-config.js";
-export { getModelCoordinationTiming, setModelCoordinationTiming };
+export {
+  getModelCoordinationFaults,
+  getModelCoordinationTiming,
+  setModelCoordinationFaults,
+  setModelCoordinationTiming,
+};
+export {
+  CLASH_RESOURCE_TYPES,
+  LMV_ID_OFFSET,
+  createClashGroup,
+  encodeClashResource,
+  versionClashData,
+} from "./model-coordination.js";
+export { mulberry32, replayClashScenario } from "./clash-scenario.js";
+export { resetModelCoordinationRateLimit } from "./model-coordination-http.js";
 export { getWebhookTiming, setWebhookTiming, simulateWebhookEvent, webhookDetails } from "./webhooks.js";
 
 function seedDefaults(store: Store, baseUrl: string): void {

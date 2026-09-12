@@ -85,6 +85,8 @@ export function metadataViews(aps: ApsStore, source: DerivativeSource): Metadata
   ];
 }
 
+const LEAF_OBJECT_COUNT = 6;
+
 function baseObjectId(urn: string, guid: string): number {
   return Number.parseInt(createHash("sha1").update(`${urn}:${guid}`).digest("hex").slice(0, 7), 16) + 1;
 }
@@ -106,10 +108,11 @@ export function derivativeObjectTree(source: DerivativeSource, view: MetadataVie
               objectid: first + 2,
               name: `${source.name} Family`,
               category: "Family",
-              objects: [
-                { objectid: first + 3, name: `${source.name} Instance 1`, category: "Instance" },
-                { objectid: first + 4, name: `${source.name} Instance 2`, category: "Instance" },
-              ],
+              objects: Array.from({ length: LEAF_OBJECT_COUNT }, (_, index) => ({
+                objectid: first + 3 + index,
+                name: `${source.name} Instance ${index + 1}`,
+                category: "Instance",
+              })),
             },
           ],
         },
@@ -120,6 +123,19 @@ export function derivativeObjectTree(source: DerivativeSource, view: MetadataVie
 
 export function flattenDerivativeObjects(objects: DerivativeObject[]): DerivativeObject[] {
   return objects.flatMap((object) => [object, ...flattenDerivativeObjects(object.objects ?? [])]);
+}
+
+/**
+ * Leaf object IDs that `GET /modelderivative/v2/designdata/:urn/metadata/:guid` serves for the 3D view of a
+ * translated document. Model Coordination clash instances reference these as `lvid`/`rvid`.
+ */
+export function derivativeLeafObjectIds(aps: ApsStore, bubbleUrn: string): number[] {
+  const source = sourceForUrn(aps, bubbleUrn);
+  const view = metadataViews(aps, source).find((candidate) => candidate.role === "3d");
+  if (!view) return [];
+  return flattenDerivativeObjects(derivativeObjectTree(source, view))
+    .filter((object) => !object.objects)
+    .map((object) => object.objectid);
 }
 
 export function derivativeProperties(source: DerivativeSource, view: MetadataView, objects: DerivativeObject[]) {
